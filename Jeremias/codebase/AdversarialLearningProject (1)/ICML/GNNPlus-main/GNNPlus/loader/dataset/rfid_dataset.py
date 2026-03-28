@@ -29,11 +29,16 @@ class RFIDDataset(InMemoryDataset):
         pass
 
     def process(self):
-        print("RAW DIR:", self.raw_dir)
-        # In the new SavedTensor structure, gesture folders are directly in RAW DIR
-        # gesture1, gesture2, ...
-        gesture_folders = sorted([d for d in os.listdir(self.raw_dir) 
-                                if os.path.isdir(osp.join(self.raw_dir, d))])
+        # Look in self.raw_dir first (PyG standard), but fallback to self.root if raw is empty
+        search_path = self.raw_dir
+        if not os.path.exists(search_path) or not any(os.path.isdir(os.path.join(search_path, d)) for d in os.listdir(search_path)):
+            search_path = self.root
+            
+        print("SEARCHING FOR DATA IN:", search_path)
+        
+        # In the SavedTensor structure, gesture folders (e.g., gesture1 or just 1) are here
+        gesture_folders = sorted([d for d in os.listdir(search_path) 
+                                if os.path.isdir(os.path.join(search_path, d)) and d != 'processed' and d != 'raw'])
         
         print(f"[*] Found {len(gesture_folders)} gesture folders.")
         data_list = []
@@ -57,7 +62,7 @@ class RFIDDataset(InMemoryDataset):
             except:
                 label = 0 # fallback
                 
-            g_path = osp.join(self.raw_dir, g_folder)
+            g_path = os.path.join(search_path, g_folder)
             
             for file in tqdm(os.listdir(g_path), desc=f'Loading {g_folder}'):
                 if not file.endswith('.npy'):
