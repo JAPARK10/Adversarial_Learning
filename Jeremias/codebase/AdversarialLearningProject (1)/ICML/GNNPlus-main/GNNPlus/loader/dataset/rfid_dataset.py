@@ -29,29 +29,14 @@ class RFIDDataset(InMemoryDataset):
         pass
 
     def process(self):
-
         print("RAW DIR:", self.raw_dir)
-        print("RAW DIR EXISTS:", os.path.exists(self.raw_dir))
-        print("RAW DIR CONTENT:", os.listdir(self.raw_dir))
-
+        # In the new SavedTensor structure, gesture folders are directly in RAW DIR
+        # gesture1, gesture2, ...
+        gesture_folders = sorted([d for d in os.listdir(self.raw_dir) 
+                                if os.path.isdir(osp.join(self.raw_dir, d))])
+        
+        print(f"[*] Found {len(gesture_folders)} gesture folders.")
         data_list = []
-
-        # Find all participant folders
-        participants = sorted([d for d in os.listdir(self.raw_dir) 
-                             if os.path.isdir(osp.join(self.raw_dir, d))])
-        
-        participant_to_id = {p: i for i, p in enumerate(participants)}
-        
-        # We need a global mapping for exercises across all participants
-        all_exercises = set()
-        for p in participants:
-            p_path = osp.join(self.raw_dir, p)
-            ex_folders = [d for d in os.listdir(p_path) if os.path.isdir(osp.join(p_path, d))]
-            all_exercises.update(ex_folders)
-        
-        exercise_to_label = {ex: i for i, ex in enumerate(sorted(list(all_exercises)))}
-
-        print(f"[*] Found {len(participants)} participants and {len(exercise_to_label)} exercises.")
 
         # Fixed physical proximity edges
         edge_pairs = [
@@ -62,41 +47,52 @@ class RFIDDataset(InMemoryDataset):
         ]
         edge_index = torch.tensor(edge_pairs, dtype=torch.long).t()
 
-        for p in participants:
-            p_id = participant_to_id[p]
-            p_path = osp.join(self.raw_dir, p)
+        for g_folder in gesture_folders:
+            # Assuming folder name is 'gesture1', 'gesture2' or just the label index
+            try:
+                # Extract digits if it's 'gesture1' -> 1
+                import re
+                match = re.search(r'\d+', g_folder)
+                label = int(match.group()) if match else int(g_folder)
+            except:
+                label = 0 # fallback
+                
+            g_path = osp.join(self.raw_dir, g_folder)
             
-            ex_folders = sorted([d for d in os.listdir(p_path) if os.path.isdir(osp.join(p_path, d))])
-            
-            for ex in ex_folders:
-                ex_path = osp.join(p_path, ex)
-                label = exercise_to_label[ex]
+            for file in tqdm(os.listdir(g_path), desc=f'Loading {g_folder}'):
+                if not file.endswith('.npy'):
+                    continue
 
-                for file in tqdm(os.listdir(ex_path), desc=f'Processing {p}/{ex}'):
-                    if not file.endswith('.npy'):
-                        continue
+                arr = np.load(osp.join(g_path, file))  # (30, 8, 2)
+                
+                # Build node features (30 timesteps * 2 features = 60 per tag)
+                node_features = []
+                for tag in range(8):
+                    tag_signal = arr[:, tag, :]
+                    tag_feat = tag_signal.reshape(-1)
+                    node_features.append(tag_feat)
 
-                    arr = np.load(osp.join(ex_path, file))  # (30, 8, 2)
+                x = torch.tensor(node_features, dtype=torch.float)
+                y = torch.tensor([label], dtype=torch.long)
+                
+                # Extract participant ID from filename if it exists (e.g. _p01.npy)
+                # Otherwise default to 0
+                p_id = 0
+                if "_p" in file:
+                    try:
+                        p_id = int(file.split("_p")[1].split(".")[0])
+                    except:
+                        pass
+                
+                p_y = torch.tensor([p_id], dtype=torch.long)
 
-                    # Build node features
-                    node_features = []
-                    for tag in range(8):
-                        tag_signal = arr[:, tag, :]      # (30, 2)
-                        tag_feat = tag_signal.reshape(-1)  # (60,)
-                        node_features.append(tag_feat)
-
-                    x = torch.tensor(node_features, dtype=torch.float)
-                    y = torch.tensor([label], dtype=torch.long)
-                    p_y = torch.tensor([p_id], dtype=torch.long)
-
-                    data = Data(
-                        x=x,
-                        edge_index=edge_index,
-                        y=y,
-                        p_y=p_y
-                    )
-
-                    data_list.append(data)
+                data = Data(
+                    x=x,
+                    edge_index=edge_index,
+                    y=y,
+                    p_y=p_y
+                )
+                data_list.append(data)
 
         if self.pre_transform is not None:
             data_list = [self.pre_transform(d) for d in data_list]

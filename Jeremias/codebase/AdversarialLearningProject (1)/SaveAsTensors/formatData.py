@@ -26,7 +26,7 @@ pd.set_option('display.max_colwidth', None)  # Show full column content
 # this function formats the original data exported from the ItemTest program
 # made by IMPINJ. The output of this function returns a dataframe list
 # which contains RSSI & phase data based on EPC and iteration for 1 gesture
-def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths):
+def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths, participant_ids=None):
 
 
     ############################### FUNCTION VARIABLES ###############################
@@ -152,6 +152,9 @@ def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths):
         label = labels[i // num_epcs]
         data_index = label_counters[label]
         label_counters[label] += 1
+        
+        # Get participant ID if available
+        p_id = participant_ids[i // num_epcs] if participant_ids is not None else 0
 
         epc_group = EPC_interpolated[i:i + num_epcs]
         updated_group = []
@@ -178,7 +181,7 @@ def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths):
         class_dir = os.path.join(output_root, str(label))
         os.makedirs(class_dir, exist_ok=True)
 
-        fname = f"sample_{data_index:05d}.npy"
+        fname = f"sample_{data_index:05d}_p{p_id:02d}.npy"
         np.save(os.path.join(class_dir, fname), tensor)
 
         

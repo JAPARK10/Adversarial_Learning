@@ -54,12 +54,15 @@ def get_csv_filenames(folder_path):
 def get_csv_all(root_dir):
     csv_path = []
     labels = []
+    participant_ids = []
 
     # root_dir is likely DataSet3m
     # It contains participant folders
     participants = sorted([p for p in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, p))])
+    p_to_id = {p: i for i, p in enumerate(participants)}
 
     for participant in participants:
+        p_id = p_to_id[participant]
         participant_path = os.path.join(root_dir, participant)
         
         # Each participant folder contains exercise folders
@@ -73,8 +76,9 @@ def get_csv_all(root_dir):
                 if file.endswith('.csv'):
                     csv_path.append(os.path.join(gesture_path, file))
                     labels.append(f'gesture{number}')
+                    participant_ids.append(p_id)
 
-    return csv_path, labels
+    return csv_path, labels, participant_ids
 
 # this function is to return a list of directory paths of each gesture per 1 participant
 # sorted numerically

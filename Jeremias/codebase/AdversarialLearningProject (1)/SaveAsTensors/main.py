@@ -20,7 +20,7 @@ def main(combined_directory):
     lengths = [interpolation_length, threshold]
 
     
-    csv_path_combined, comb_labels = get_csv_all(combined_directory)
+    csv_path_combined, comb_labels, participant_ids = get_csv_all(combined_directory)
     print(f"[*] Found {len(csv_path_combined)} CSV files.")
 
     # define h5 file name and data normalization values
@@ -30,8 +30,7 @@ def main(combined_directory):
     phase_val_tx = []
 
     # format data
-
-    format(csv_path_combined, h5_name, comb_labels, RSSI_val, phase_val, flags, lengths)
+    format(csv_path_combined, h5_name, comb_labels, RSSI_val, phase_val, flags, lengths, participant_ids=participant_ids)
 
     
 
