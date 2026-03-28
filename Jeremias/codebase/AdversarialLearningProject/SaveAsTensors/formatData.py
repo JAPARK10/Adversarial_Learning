@@ -140,7 +140,6 @@ def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths, partici
 
     
     
-    
 
     output_root = r'c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\codebase\AdversarialLearningProject (1)\SaveAsTensors\SavedTensor'
     num_epcs = 8
@@ -568,3 +567,5 @@ def epc_group_to_tensor(epc_group, target_length=30, num_epcs=8):
         tensor[:, epc_idx, 1] = df["PhaseAngle"].values[:target_length]
 
     return tensor
+
+

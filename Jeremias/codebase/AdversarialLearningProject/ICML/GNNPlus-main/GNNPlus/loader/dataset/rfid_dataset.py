@@ -43,6 +43,7 @@ class RFIDDataset(InMemoryDataset):
         for d in all_items:
             full_item_path = os.path.join(search_path, d)
             is_dir = os.path.isdir(full_item_path)
+            # print(f"  - Item: {d}, IsDir: {is_dir}") # noisy but useful if above fails
             if is_dir and d not in ['processed', 'raw', '.git']:
                 gesture_folders.append(d)
         
@@ -75,7 +76,7 @@ class RFIDDataset(InMemoryDataset):
                 if not file.endswith('.npy'):
                     continue
 
-                arr = np.load(os.path.join(g_path, file))  # (30, 8, 2)
+                arr = np.load(osp.join(g_path, file))  # (30, 8, 2)
                 
                 # Build node features (30 timesteps * 2 features = 60 per tag)
                 node_features = []
