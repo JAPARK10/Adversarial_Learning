@@ -27,7 +27,7 @@ model:
   edge_decoding: dot
   graph_pooling: add
 gnn:
-  layer_type: gineconv
+  layer_type: gine
   layers_mp: 2
   dim_inner: 64
   dropout: 0.2
