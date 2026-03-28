@@ -18,3 +18,4 @@ yacs
 # Configuration and experiment management
 python-dotenv
 wandb # Optional, in case you enable it in the config
+ogb

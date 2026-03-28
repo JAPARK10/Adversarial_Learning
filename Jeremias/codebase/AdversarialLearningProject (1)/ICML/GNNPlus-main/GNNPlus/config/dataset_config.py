@@ -17,3 +17,6 @@ def dataset_cfg(cfg):
 
     # infer-link parameters (e.g., edge prediction task)
     cfg.dataset.infer_link_label = "None"
+
+    # The number of workers for the data loader.
+    cfg.dataset.num_workers = 0
