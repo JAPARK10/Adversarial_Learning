@@ -35,11 +35,19 @@ class RFIDDataset(InMemoryDataset):
             search_path = self.root
             
         print("SEARCHING FOR DATA IN:", search_path)
+        all_items = os.listdir(search_path)
+        print("DIRECTORY CONTENT:", all_items)
         
         # In the SavedTensor structure, gesture folders (e.g., gesture1 or just 1) are here
-        gesture_folders = sorted([d for d in os.listdir(search_path) 
-                                if os.path.isdir(os.path.join(search_path, d)) and d != 'processed' and d != 'raw'])
+        gesture_folders = []
+        for d in all_items:
+            full_item_path = os.path.join(search_path, d)
+            is_dir = os.path.isdir(full_item_path)
+            # print(f"  - Item: {d}, IsDir: {is_dir}") # noisy but useful if above fails
+            if is_dir and d not in ['processed', 'raw', '.git']:
+                gesture_folders.append(d)
         
+        gesture_folders.sort()
         print(f"[*] Found {len(gesture_folders)} gesture folders.")
         data_list = []
 
