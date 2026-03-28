@@ -17,7 +17,7 @@ dataset:
   edge_encoder_num_types: 1
 train:
   mode: custom
-  batch_size: 32
+  batch_size: 128
   eval_period: 1
   ckpt_period: 100
 model:
@@ -35,7 +35,7 @@ gnn:
   normalize_adj: False
 optim:
   optimizer: adam
-  base_lr: 0.01
+  base_lr: 0.001
   max_epoch: 100
   scheduler: cos
   num_warmup_epochs: 5

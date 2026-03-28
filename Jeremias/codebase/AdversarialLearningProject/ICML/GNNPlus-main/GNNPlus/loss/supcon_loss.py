@@ -51,14 +51,24 @@ class SupConLoss(nn.Module):
         mask = mask * logits_mask
 
         # Compute log_prob
+        # For numerical stability, use logsumexp pattern
         exp_logits = torch.exp(logits) * logits_mask
-        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True))
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-6)
 
         # Compute mean of log-likelihood over positive
-        mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
+        mask_pos_pairs = mask.sum(1)
+        # Avoid division by zero for samples that have no other same-class partners in the batch
+        mask_pos_pairs = torch.where(mask_pos_pairs > 0, mask_pos_pairs, torch.ones_like(mask_pos_pairs))
+        
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
 
         # Loss
         loss = - mean_log_prob_pos
-        loss = loss.view(anchor_count, batch_size).mean()
+        # Only average over samples that actually HAD positive pairs
+        valid_indices = (mask.sum(1) > 0)
+        if valid_indices.any():
+            loss = loss[valid_indices].mean()
+        else:
+            loss = loss.mean() * 0.0 # Zero loss if no pairs found
 
         return loss
