@@ -10,3 +10,6 @@ def custom_gnn_cfg(cfg):
     # Use residual connections between the GNN layers.
     cfg.gnn.residual = True
     cfg.gnn.ffn = True
+
+    # Custom model interface for RFID dataset.
+    cfg.model.interface = ''
