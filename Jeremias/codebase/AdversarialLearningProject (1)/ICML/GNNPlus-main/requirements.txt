@@ -1,0 +1,15 @@
+# Core deep learning
+torch
+torch_geometric
+
+# Visualization and data handling
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+yacs
+
+# Configuration and experiment management
+python-dotenv
+wandb # Optional, in case you enable it in the config
