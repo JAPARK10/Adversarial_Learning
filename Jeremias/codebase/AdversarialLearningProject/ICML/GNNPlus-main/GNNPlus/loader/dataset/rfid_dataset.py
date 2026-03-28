@@ -11,7 +11,8 @@ class RFIDDataset(InMemoryDataset):
                  transform=None, pre_transform=None):
         self.name = name
         if root is None:
-            root = r'codebase/AdversarialLearningProject (1)/ICML/GNNPlus-main/RFIDDataSet'
+            # Updated to the new consolidated path
+            root = r'codebase/AdversarialLearningProject/ICML/GNNPlus-main/RFIDDataSet'
         super().__init__(root, transform, pre_transform)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -43,7 +44,6 @@ class RFIDDataset(InMemoryDataset):
         for d in all_items:
             full_item_path = os.path.join(search_path, d)
             is_dir = os.path.isdir(full_item_path)
-            # print(f"  - Item: {d}, IsDir: {is_dir}") # noisy but useful if above fails
             if is_dir and d not in ['processed', 'raw', '.git']:
                 gesture_folders.append(d)
         
@@ -67,6 +67,10 @@ class RFIDDataset(InMemoryDataset):
                 import re
                 match = re.search(r'\d+', g_folder)
                 label = int(match.group()) if match else int(g_folder)
+                
+                # Normalize 1-based labels (gesture1-21) to 0-based (0-20)
+                # This prevents "Assertion t >= 0 && t < n_classes" errors in CUDA.
+                label = label - 1
             except:
                 label = 0 # fallback
                 
@@ -76,7 +80,7 @@ class RFIDDataset(InMemoryDataset):
                 if not file.endswith('.npy'):
                     continue
 
-                arr = np.load(osp.join(g_path, file))  # (30, 8, 2)
+                arr = np.load(os.path.join(g_path, file))  # (30, 8, 2)
                 
                 # Build node features (30 timesteps * 2 features = 60 per tag)
                 node_features = []

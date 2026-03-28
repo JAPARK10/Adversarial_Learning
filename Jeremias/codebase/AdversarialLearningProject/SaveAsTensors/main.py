@@ -36,7 +36,6 @@ def main(combined_directory):
 
 if __name__ == '__main__':
     
-    combined_directory = r'c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\codebase\AdversarialLearningProject (1)\DataSet3m'
+    combined_directory = r'c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\codebase\AdversarialLearningProject\DataSet3m'
 
     main(combined_directory)
-

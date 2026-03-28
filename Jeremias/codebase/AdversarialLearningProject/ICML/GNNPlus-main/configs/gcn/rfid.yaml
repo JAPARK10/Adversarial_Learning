@@ -1,10 +1,3 @@
-out_dir: results
-metric_best: accuracy
-
-wandb:
-  use: False
-  project: rfid
-
 dataset:
   format: RFID
   name: rfid
@@ -13,34 +6,34 @@ dataset:
   task: graph
   task_type: classification
   transductive: False
-  split_mode: random
-  split: [0.8, 0.1, 0.1]   # train / val / test
-  node_encoder: False
-  edge_encoder: False
-
+  split_index: 0
+  node_encoder: True
+  node_encoder_name: TypeDictNodeEncoder
+  node_encoder_num_types: 1
+  edge_encoder: True
+  edge_encoder_name: TypeDictEdgeEncoder
+  edge_encoder_num_types: 1
 train:
   mode: custom
   batch_size: 32
   eval_period: 1
   ckpt_period: 100
-
 model:
   type: custom_gnn
+  interface: rfid
   loss_fun: cross_entropy
-  graph_pooling: mean
-
+  edge_decoding: dot
+  graph_pooling: add
 gnn:
-  head: mlp_graph
-  layers_pre_mp: 1
-  layers_mp: 3
-  layers_post_mp: 2
-  dim_inner: 128
-  layer_type: gcn
-  act: relu
+  layer_type: gcnconv
+  layers_mp: 2
+  dim_inner: 64
   dropout: 0.2
-  residual: False
-
+  agg: mean
+  normalize_adj: False
 optim:
   optimizer: adam
-  base_lr: 0.001
-  max_epoch: 150
+  base_lr: 0.01
+  max_epoch: 100
+  scheduler: cos
+  num_warmup_epochs: 5
