@@ -1,0 +1,72 @@
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:31: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_scatter/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-scatter'. "
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:42: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_sparse/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-sparse'. "
+Traceback (most recent call last):
+  File "/home/golipos1/GNNPlus/GNNPlus-main/main.py", line 5, in <module>
+    import GNNPlus  # noqa, register custom modules
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/__init__.py", line 1, in <module>
+    from .act import * # noqa
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/act/example.py", line 5, in <module>
+    from torch_geometric.graphgym.config import cfg
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/__init__.py", line 1, in <module>
+    import torch_geometric.utils
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/__init__.py", line 8, in <module>
+    from .dropout import dropout_adj, dropout_node, dropout_edge, dropout_path
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/dropout.py", line 6, in <module>
+    import torch_cluster  # noqa
+  File "/home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/__init__.py", line 18, in <module>
+    torch.ops.load_library(spec.origin)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch/_ops.py", line 933, in load_library
+    ctypes.CDLL(path)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/ctypes/__init__.py", line 374, in __init__
+    self._handle = _dlopen(self._name, mode)
+OSError: /home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:31: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_scatter/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-scatter'. "
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:42: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_sparse/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-sparse'. "
+Traceback (most recent call last):
+  File "/home/golipos1/GNNPlus/GNNPlus-main/main.py", line 5, in <module>
+    import GNNPlus  # noqa, register custom modules
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/__init__.py", line 1, in <module>
+    from .act import * # noqa
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/act/example.py", line 5, in <module>
+    from torch_geometric.graphgym.config import cfg
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/__init__.py", line 1, in <module>
+    import torch_geometric.utils
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/__init__.py", line 8, in <module>
+    from .dropout import dropout_adj, dropout_node, dropout_edge, dropout_path
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/dropout.py", line 6, in <module>
+    import torch_cluster  # noqa
+  File "/home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/__init__.py", line 18, in <module>
+    torch.ops.load_library(spec.origin)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch/_ops.py", line 933, in load_library
+    ctypes.CDLL(path)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/ctypes/__init__.py", line 374, in __init__
+    self._handle = _dlopen(self._name, mode)
+OSError: /home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:31: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_scatter/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-scatter'. "
+/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/typing.py:42: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: /home/golipos1/.local/lib/python3.10/site-packages/torch_sparse/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+  warnings.warn(f"An issue occurred while importing 'torch-sparse'. "
+Traceback (most recent call last):
+  File "/home/golipos1/GNNPlus/GNNPlus-main/main.py", line 5, in <module>
+    import GNNPlus  # noqa, register custom modules
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/__init__.py", line 1, in <module>
+    from .act import * # noqa
+  File "/home/golipos1/GNNPlus/GNNPlus-main/GNNPlus/act/example.py", line 5, in <module>
+    from torch_geometric.graphgym.config import cfg
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/__init__.py", line 1, in <module>
+    import torch_geometric.utils
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/__init__.py", line 8, in <module>
+    from .dropout import dropout_adj, dropout_node, dropout_edge, dropout_path
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch_geometric/utils/dropout.py", line 6, in <module>
+    import torch_cluster  # noqa
+  File "/home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/__init__.py", line 18, in <module>
+    torch.ops.load_library(spec.origin)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/site-packages/torch/_ops.py", line 933, in load_library
+    ctypes.CDLL(path)
+  File "/home/golipos1/miniconda3/envs/GNNPlus/lib/python3.10/ctypes/__init__.py", line 374, in __init__
+    self._handle = _dlopen(self._name, mode)
+OSError: /home/golipos1/.local/lib/python3.10/site-packages/torch_cluster/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb

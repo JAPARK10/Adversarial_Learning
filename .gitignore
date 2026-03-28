@@ -1,3 +1,4 @@
-/codebase
-codebase/
-codebase
+**/datasets/
+**/SavedTensor/
+*.pt
+*.npy
