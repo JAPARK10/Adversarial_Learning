@@ -9,6 +9,7 @@ dataset:
   format: RFID
   name: rfid
   dir: ../../SaveAsTensors/SavedTensor
+  num_workers: 4
   task: graph
   task_type: classification
   transductive: False

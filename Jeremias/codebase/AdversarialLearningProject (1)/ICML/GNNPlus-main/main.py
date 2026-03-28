@@ -129,6 +129,9 @@ if __name__ == '__main__':
                 model, cfg.pretrained.dir, cfg.pretrained.freeze_main,
                 cfg.pretrained.reset_prediction_head, seed=cfg.seed
             )
+        
+        # Ensure model is on the correct device (GPU)
+        model.to(torch.device(cfg.accelerator))
         optimizer = create_optimizer(model.parameters(),
                                      new_optimizer_config(cfg))
         scheduler = create_scheduler(optimizer, new_scheduler_config(cfg))
