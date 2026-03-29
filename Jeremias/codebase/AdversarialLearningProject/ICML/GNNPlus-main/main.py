@@ -154,4 +154,19 @@ if __name__ == '__main__':
         else:
             train_dict[cfg.train.mode](loggers, loaders, model, optimizer,
                                        scheduler)
+    
+        # Final Summary Report
+        logging.info("\n" + "="*50)
+        logging.info("      [*] FINAL EXPERIMENT SUMMARY [*]")
+        logging.info("="*50)
+        
+        mode_str = "Zero-Shot (New Person)" if USE_PERSON_EXCLUSIVE else "Random Split (Standard)"
+        subject_str = f"Excluded Subject: #{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "All Subjects mixed"
+        
+        logging.info(f"[*] Evaluation Mode  : {mode_str}")
+        logging.info(f"[*] Subject Context  : {subject_str}")
+        logging.info(f"[*] Result Directory : {cfg.run_dir}")
+        logging.info(f"[*] Best Epoch       : See logs for details")
+        logging.info("="*50 + "\n")
+
     logging.info(f"[*] All done: {datetime.datetime.now()}")
