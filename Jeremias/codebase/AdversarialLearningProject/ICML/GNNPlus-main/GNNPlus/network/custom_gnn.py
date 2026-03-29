@@ -60,21 +60,21 @@ class CustomGNN(torch.nn.Module):
         # Adversarial Branch
         if USE_ADVERSARIAL:
             print("[*] Building Adversarial Branch (Participant Discriminator)")
-            self.grl = GradientReversalLayer(alpha=1.0)
-            # Assuming 17 participants based on the PDF/DataSet3m
+            self.grl = GradientReversalLayer(alpha=0.5) # Reduced alpha to 0.5 to prevent over-regularization
+            # Assuming 16 participants total
             self.participant_discriminator = torch.nn.Sequential(
-                torch.nn.Linear(cfg.gnn.dim_inner, 64),
+                torch.nn.Linear(cfg.gnn.dim_inner * 2, 64), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
-                torch.nn.Linear(64, 18) # Changed to 18 to be safe with 1-based indexing or extras
+                torch.nn.Linear(64, 18) 
             )
 
         # Contrastive Branch (Projection Head)
         if USE_CONTRASTIVE:
             print("[*] Building Contrastive Branch (Projection Head)")
             self.projection_head = torch.nn.Sequential(
-                torch.nn.Linear(cfg.gnn.dim_inner, cfg.gnn.dim_inner),
+                torch.nn.Linear(cfg.gnn.dim_inner * 2, cfg.gnn.dim_inner), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
-                torch.nn.Linear(cfg.gnn.dim_inner, 128) # 128-dim embedding for SupCon
+                torch.nn.Linear(cfg.gnn.dim_inner, 128) 
             )
 
     def build_conv_model(self, model_type):
@@ -111,8 +111,10 @@ class CustomGNN(torch.nn.Module):
         # We need the node features pooled to graph features 
         # (Only calculate once if either branch is active)
         if USE_ADVERSARIAL or USE_CONTRASTIVE:
-            from torch_geometric.nn import global_mean_pool
-            graph_emb = global_mean_pool(batch.x, batch.batch)
+            from torch_geometric.nn import global_mean_pool, global_max_pool
+            mean_pool = global_mean_pool(batch.x, batch.batch)
+            max_pool = global_max_pool(batch.x, batch.batch)
+            graph_emb = torch.cat([mean_pool, max_pool], dim=1)
         
         # 4. Exercise Head (Main Prediction)
         exercise_pred, true = self.post_mp(batch)

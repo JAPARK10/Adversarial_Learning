@@ -82,6 +82,12 @@ class RFIDDataset(InMemoryDataset):
 
                 arr = np.load(os.path.join(g_path, file))  # (30, 8, 2)
                 
+                # Per-sample normalization (Standardize to zero mean, unit variance)
+                # This removes the "absolute magnitude" shortcut for identity detection.
+                arr_mean = arr.mean()
+                arr_std = arr.std() + 1e-7
+                arr = (arr - arr_mean) / arr_std
+                
                 # Build node features (30 timesteps * 2 features = 60 per tag)
                 node_features = []
                 for tag in range(8):
