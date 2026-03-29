@@ -19,6 +19,9 @@ from dotenv import load_dotenv
 load_dotenv()
 USE_ADVERSARIAL = os.getenv("USE_ADVERSARIAL_LAYERS", "false").lower() == "true"
 USE_CONTRASTIVE = os.getenv("USE_CONTRASTIVE_LEARNING", "false").lower() == "true"
+USE_PERSON_EXCLUSIVE = os.getenv("USE_PERSON_EXCLUSIVE_SPLIT", "false").lower() == "true"
+EXCLUDE_VAL_ID = os.getenv("EXCLUDE_PERSON_ID_VAL", "15")
+EXCLUDE_TEST_ID = os.getenv("EXCLUDE_PERSON_ID_TEST", "16")
 
 import GNNPlus  # noqa, register custom modules
 from GNNPlus.optimizer.extra_optimizers import ExtendedSchedulerConfig
@@ -92,7 +95,8 @@ if __name__ == '__main__':
     # Dynamic Naming for Run Directory
     adv_str = "AdvT" if USE_ADVERSARIAL else "AdvF"
     con_str = "ConT" if USE_CONTRASTIVE else "ConF"
-    tag = f"{adv_str}_{con_str}"
+    pel_str = f"PX_V{EXCLUDE_VAL_ID}_T{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "PXF"
+    tag = f"{adv_str}_{con_str}_{pel_str}"
     
     if "results" in cfg.run_dir:
         cfg.run_dir = cfg.run_dir.replace("results", f"results_{tag}")

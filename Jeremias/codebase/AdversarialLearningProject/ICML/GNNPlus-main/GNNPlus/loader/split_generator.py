@@ -8,18 +8,25 @@ from torch_geometric.graphgym.config import cfg
 from torch_geometric.graphgym.loader import index2mask, set_dataset_attr
 
 
-def prepare_splits(dataset):
-    """Ready train/val/test splits.
 
-    Determine the type of split from the config and call the corresponding
-    split generation / verification function.
-    """
+def prepare_splits(dataset):
+    """Ready train/val/test splits."""
+    # Check .env first for global override
+    USE_PX = os.getenv("USE_PERSON_EXCLUSIVE_SPLIT", "false").lower() == "true"
+    
+    if USE_PX:
+        print("[*] Using PERSON-EXCLUSIVE SPLIT Mode (from .env)")
+        setup_person_exclusive_split(dataset)
+        return
+
     split_mode = cfg.dataset.split_mode
 
     if split_mode == 'standard':
         setup_standard_split(dataset)
     elif split_mode == 'random':
         setup_random_split(dataset)
+    elif split_mode == 'person_exclusive':
+        setup_person_exclusive_split(dataset)
     elif split_mode.startswith('cv-'):
         cv_type, k = split_mode.split('-')[1:]
         setup_cv_split(dataset, cv_type, int(k))
@@ -29,6 +36,51 @@ def prepare_splits(dataset):
         setup_sliced_split(dataset)
     else:
         raise ValueError(f"Unknown split mode: {split_mode}")
+
+
+def setup_person_exclusive_split(dataset):
+    """Generate splits where specific participants are held out for val/test."""
+    # Ensure participant IDs are available
+    if not hasattr(dataset.data, 'p_y'):
+        print("[!] Warning: p_y not found in dataset. Falling back to random split.")
+        setup_random_split(dataset)
+        return
+
+    p_ids = dataset.data.p_y.numpy()
+    unique_p = np.unique(p_ids).tolist()
+    num_p = len(unique_p)
+    
+    # Read specific IDs from .env
+    try:
+        val_id = int(os.getenv("EXCLUDE_PERSON_ID_VAL", "-1"))
+        test_id = int(os.getenv("EXCLUDE_PERSON_ID_TEST", "-1"))
+    except ValueError:
+        val_id, test_id = -1, -1
+
+    # Fallback if IDs are invalid or not in dataset
+    if val_id not in unique_p or test_id not in unique_p:
+        print(f"[!] Warning: Specified IDs ({val_id}, {test_id}) not found or invalid.")
+        print(f"[*] Available participants: {unique_p}")
+        print("[*] Falling back to automatic selection (last two).")
+        val_p = [unique_p[-2]]
+        test_p = [unique_p[-1]]
+    else:
+        val_p = [val_id]
+        test_p = [test_id]
+    
+    train_p = [p for p in unique_p if p not in val_p and p not in test_p]
+    
+    print(f"[*] Found {num_p} participants: {unique_p}")
+    print(f"[*] Split Strategy (Manual/Custom):")
+    print(f"    - Train: {train_p}")
+    print(f"    - Val  : {val_p}")
+    print(f"    - Test : {test_p}")
+
+    train_index = np.where(np.isin(p_ids, train_p))[0]
+    val_index = np.where(np.isin(p_ids, val_p))[0]
+    test_index = np.where(np.isin(p_ids, test_p))[0]
+    
+    set_dataset_splits(dataset, [train_index, val_index, test_index])
 
 
 def setup_standard_split(dataset):

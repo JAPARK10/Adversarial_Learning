@@ -1,10 +1,11 @@
 # Core deep learning
 torch
 torch_geometric
-torch_scatter
-torch_sparse
-torch_cluster
-torch_spline_conv
+# torch_geometric dependencies (Install manually via wheels to avoid hangs)
+# torch_scatter
+# torch_sparse
+# torch_cluster
+# torch_spline_conv
 pytorch_lightning
 
 # Visualization and data handling
