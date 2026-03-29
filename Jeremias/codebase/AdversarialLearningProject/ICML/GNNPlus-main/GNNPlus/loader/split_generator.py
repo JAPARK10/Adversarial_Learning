@@ -13,9 +13,10 @@ def prepare_splits(dataset):
     """Ready train/val/test splits."""
     # Check .env first for global override
     USE_PX = os.getenv("USE_PERSON_EXCLUSIVE_SPLIT", "false").lower() == "true"
+    USE_ST = os.getenv("USE_STRESS_TEST", "false").lower() == "true"
     
-    if USE_PX:
-        print("[*] Using PERSON-EXCLUSIVE SPLIT Mode (from .env)")
+    if USE_PX or USE_ST:
+        print(f"[*] Global Override Hook: Using {'STRESS TEST' if USE_ST else 'PERSON-EXCLUSIVE'} Split Mode")
         setup_person_exclusive_split(dataset)
         return
 

@@ -92,14 +92,18 @@ class RFIDDataset(InMemoryDataset):
                 x = torch.tensor(node_features, dtype=torch.float)
                 y = torch.tensor([label], dtype=torch.long)
                 
-                # Extract participant ID from filename if it exists (e.g. _p01.npy)
-                # Otherwise default to 0
+                # Robust extraction of participant ID from filename
+                import re
                 p_id = 0
-                if "_p" in file:
-                    try:
-                        p_id = int(file.split("_p")[1].split(".")[0])
-                    except:
-                        pass
+                # Look for 'p' or 'P' followed by digits (e.g., _p01, P12)
+                p_match = re.search(r'[pP](\d+)', file)
+                if p_match:
+                    p_id = int(p_match.group(1))
+                else:
+                    # Fallback: look for digits between underscore and extension (e.g., gesture1_14.npy)
+                    digit_match = re.search(r'_(\d+)\.npy$', file)
+                    if digit_match:
+                        p_id = int(digit_match.group(1))
                 
                 p_y = torch.tensor([p_id], dtype=torch.long)
 
@@ -110,6 +114,16 @@ class RFIDDataset(InMemoryDataset):
                     p_y=p_y
                 )
                 data_list.append(data)
+
+        # Print summary of findings
+        print(f"[*] Preprocessing complete. Total graphs: {len(data_list)}")
+        p_counts = {}
+        for d in data_list:
+            pid = int(d.p_y.item())
+            p_counts[pid] = p_counts.get(pid, 0) + 1
+        print("[*] Detected Participant Distribution:")
+        for pid in sorted(p_counts.keys()):
+            print(f"    - Participant #{pid}: {p_counts[pid]} samples")
 
         if self.pre_transform is not None:
             data_list = [self.pre_transform(d) for d in data_list]
