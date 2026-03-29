@@ -22,6 +22,7 @@ USE_CONTRASTIVE = os.getenv("USE_CONTRASTIVE_LEARNING", "false").lower() == "tru
 USE_PERSON_EXCLUSIVE = os.getenv("USE_PERSON_EXCLUSIVE_SPLIT", "false").lower() == "true"
 EXCLUDE_VAL_ID = os.getenv("EXCLUDE_PERSON_ID_VAL", "15")
 EXCLUDE_TEST_ID = os.getenv("EXCLUDE_PERSON_ID_TEST", "16")
+USE_STRESS_TEST = os.getenv("USE_STRESS_TEST", "false").lower() == "true"
 
 import GNNPlus  # noqa, register custom modules
 from GNNPlus.optimizer.extra_optimizers import ExtendedSchedulerConfig
@@ -95,7 +96,12 @@ if __name__ == '__main__':
     # Dynamic Naming for Run Directory
     adv_str = "AdvT" if USE_ADVERSARIAL else "AdvF"
     con_str = "ConT" if USE_CONTRASTIVE else "ConF"
-    pel_str = f"PX_V{EXCLUDE_VAL_ID}_T{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "PXF"
+    
+    if USE_STRESS_TEST:
+        pel_str = "STRESS_TEST"
+    else:
+        pel_str = f"PX_V{EXCLUDE_VAL_ID}_T{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "PXF"
+        
     tag = f"{adv_str}_{con_str}_{pel_str}"
     
     if "results" in cfg.run_dir:
@@ -152,21 +158,25 @@ if __name__ == '__main__':
             datamodule = GraphGymDataModule()
             train(model, datamodule, logger=True)
         else:
-            train_dict[cfg.train.mode](loggers, loaders, model, optimizer,
-                                       scheduler)
+            best_stats = train_dict[cfg.train.mode](loggers, loaders, model, optimizer,
+                                                    scheduler)
     
         # Final Summary Report
         logging.info("\n" + "="*50)
         logging.info("      [*] FINAL EXPERIMENT SUMMARY [*]")
         logging.info("="*50)
         
-        mode_str = "Zero-Shot (New Person)" if USE_PERSON_EXCLUSIVE else "Random Split (Standard)"
-        subject_str = f"Excluded Subject: #{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "All Subjects mixed"
+        mode_str = "Stress Test (2-Train / 14-Test)" if USE_STRESS_TEST else ("Zero-Shot (New Person)" if USE_PERSON_EXCLUSIVE else "Random Split (Standard)")
+        subject_str = "Train[#0,#1] | Test[Rest]" if USE_STRESS_TEST else (f"Excluded Subject: #{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "All Subjects mixed")
         
         logging.info(f"[*] Evaluation Mode  : {mode_str}")
         logging.info(f"[*] Subject Context  : {subject_str}")
+        
+        if (USE_PERSON_EXCLUSIVE or USE_STRESS_TEST) and best_stats:
+            logging.info(f"[*] BEST TEST ACC    : {best_stats.get('accuracy', 0)*100:.2f}%")
+            logging.info(f"[*] BEST TEST F1     : {best_stats.get('f1', 0):.4f}")
+            
         logging.info(f"[*] Result Directory : {cfg.run_dir}")
-        logging.info(f"[*] Best Epoch       : See logs for details")
         logging.info("="*50 + "\n")
 
     logging.info(f"[*] All done: {datetime.datetime.now()}")

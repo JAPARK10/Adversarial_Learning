@@ -384,6 +384,7 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
         run = None
 
     logging.info('Task done, results saved in %s', cfg.run_dir)
+    return perf[2][best_epoch] # Return best test stats
 
 
 @register_train('inference-only')

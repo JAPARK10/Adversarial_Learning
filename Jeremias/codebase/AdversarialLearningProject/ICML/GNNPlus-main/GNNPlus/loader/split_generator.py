@@ -50,28 +50,38 @@ def setup_person_exclusive_split(dataset):
     unique_p = np.unique(p_ids).tolist()
     num_p = len(unique_p)
     
-    # Read specific IDs from .env
+    # Read flags and IDs from .env
+    STRESS_TEST = os.getenv("USE_STRESS_TEST", "false").lower() == "true"
+    
     try:
         val_id = int(os.getenv("EXCLUDE_PERSON_ID_VAL", "-1"))
         test_id = int(os.getenv("EXCLUDE_PERSON_ID_TEST", "-1"))
     except ValueError:
         val_id, test_id = -1, -1
 
-    # Fallback if IDs are invalid or not in dataset
-    if val_id not in unique_p or test_id not in unique_p:
-        print(f"[!] Warning: Specified IDs ({val_id}, {test_id}) not found or invalid.")
-        print(f"[*] Available participants: {unique_p}")
-        print("[*] Falling back to automatic selection (last two).")
-        val_p = [unique_p[-2]]
-        test_p = [unique_p[-1]]
+    if STRESS_TEST:
+        print("[!] STRESS TEST MODE ENABLED: Training on only 2 participants.")
+        # Strategy: Train on the first 2, Val on the 3rd, Test on all the rest (13 people)
+        train_p = unique_p[:2]
+        val_p = [unique_p[2]]
+        test_p = unique_p[3:]
     else:
-        val_p = [val_id]
-        test_p = [test_id]
-    
-    train_p = [p for p in unique_p if p not in val_p and p not in test_p]
+        # Fallback if IDs are invalid or not in dataset
+        if val_id not in unique_p or test_id not in unique_p:
+            print(f"[!] Warning: Specified IDs ({val_id}, {test_id}) not found or invalid.")
+            print(f"[*] Available participants: {unique_p}")
+            print("[*] Falling back to automatic selection (last two).")
+            val_p = [unique_p[-2]]
+            test_p = [unique_p[-1]]
+        else:
+            val_p = [val_id]
+            test_p = [test_id]
+        
+        train_p = [p for p in unique_p if p not in val_p and p not in test_p]
     
     print(f"[*] Found {num_p} participants: {unique_p}")
-    print(f"[*] Split Strategy (Manual/Custom):")
+    mode_name = "STRESS TEST (2-subject train)" if STRESS_TEST else "Manual/Custom"
+    print(f"[*] Split Strategy ({mode_name}):")
     print(f"    - Train: {train_p}")
     print(f"    - Val  : {val_p}")
     print(f"    - Test : {test_p}")
