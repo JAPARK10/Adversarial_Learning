@@ -61,11 +61,11 @@ def setup_person_exclusive_split(dataset):
         val_id, test_id = -1, -1
 
     if STRESS_TEST:
-        print("[!] STRESS TEST MODE ENABLED: Training on only 2 participants.")
-        # Strategy: Train on the first 2, Val on the 3rd, Test on all the rest (13 people)
-        train_p = unique_p[:2]
-        val_p = [unique_p[2]]
-        test_p = unique_p[3:]
+        print("[!] STRESS TEST MODE ENABLED: Training on 8 participants (8-vs-Rest).")
+        # Strategy: Train on the first 8, Val on the 9th, Test on all the rest
+        train_p = unique_p[:8]
+        val_p = [unique_p[8]]
+        test_p = unique_p[9:]
     else:
         # Fallback if IDs are invalid or not in dataset
         if val_id not in unique_p or test_id not in unique_p:
