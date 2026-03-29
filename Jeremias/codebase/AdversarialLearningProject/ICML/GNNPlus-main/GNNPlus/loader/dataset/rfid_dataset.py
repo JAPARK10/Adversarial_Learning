@@ -94,19 +94,13 @@ class RFIDDataset(InMemoryDataset):
                 
                 # Robust extraction of participant ID from filename
                 import re
-                p_id = 0
-                # STRICT: Look for 'p' or 'P' followed by digits (e.g., _p01, P12)
                 p_match = re.search(r'[pP](\d+)', file)
-                if p_match:
-                    p_id = int(p_match.group(1))
-                else:
-                    # If no 'p' tag found, we assume it belongs to the shared/default Subject 0
-                    p_id = 0
-                    if not hasattr(self, '_debug_s0_count'): self._debug_s0_count = 0
-                    if self._debug_s0_count < 5:
-                        print(f"[DEBUG S0] Filename with no 'p' tag: {file}")
-                        self._debug_s0_count += 1
+                if not p_match:
+                    # CRITICAL: We skip files with no 'p' tag because they are
+                    # likely unlabeled duplicates of our test subjects (Subject 0 Leak)
+                    continue
                 
+                p_id = int(p_match.group(1))
                 p_y = torch.tensor([p_id], dtype=torch.long)
 
                 data = Data(
