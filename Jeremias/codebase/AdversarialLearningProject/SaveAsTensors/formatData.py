@@ -142,7 +142,7 @@ def format(inputs, h5_name, labels, RSSI_val, phase_val, flags, lengths, partici
     
     
 
-    output_root = r'c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\codebase\AdversarialLearningProject\SaveAsTensors\SavedTensor'
+    output_root = r'c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\Jeremias\codebase\AdversarialLearningProject\SaveAsTensors\SavedTensor'
     num_epcs = 8
     target_length = 30
 
