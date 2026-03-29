@@ -102,6 +102,10 @@ class RFIDDataset(InMemoryDataset):
                 else:
                     # If no 'p' tag found, we assume it belongs to the shared/default Subject 0
                     p_id = 0
+                    if not hasattr(self, '_debug_s0_count'): self._debug_s0_count = 0
+                    if self._debug_s0_count < 5:
+                        print(f"[DEBUG S0] Filename with no 'p' tag: {file}")
+                        self._debug_s0_count += 1
                 
                 p_y = torch.tensor([p_id], dtype=torch.long)
 
