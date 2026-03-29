@@ -95,15 +95,13 @@ class RFIDDataset(InMemoryDataset):
                 # Robust extraction of participant ID from filename
                 import re
                 p_id = 0
-                # Look for 'p' or 'P' followed by digits (e.g., _p01, P12)
+                # STRICT: Look for 'p' or 'P' followed by digits (e.g., _p01, P12)
                 p_match = re.search(r'[pP](\d+)', file)
                 if p_match:
                     p_id = int(p_match.group(1))
                 else:
-                    # Fallback: look for digits between underscore and extension (e.g., gesture1_14.npy)
-                    digit_match = re.search(r'_(\d+)\.npy$', file)
-                    if digit_match:
-                        p_id = int(digit_match.group(1))
+                    # If no 'p' tag found, we assume it belongs to the shared/default Subject 0
+                    p_id = 0
                 
                 p_y = torch.tensor([p_id], dtype=torch.long)
 
