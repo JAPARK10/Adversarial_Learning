@@ -86,6 +86,53 @@ def run_loop_settings():
     return run_ids, seeds, split_indices
 
 
+def final_comprehensive_report(model, loader):
+    """
+    Runs a final pass over the test loader and reports accuracy per participant ID.
+    """
+    model.eval()
+    p_correct = {}
+    p_total = {}
+    
+    for batch in loader:
+        batch.to(torch.device(cfg.accelerator))
+        with torch.no_grad():
+            preds_dict, targets = model(batch)
+        preds = preds_dict['exercise'].argmax(dim=1)
+        
+        # batch.p_y contains participant IDs
+        p_ids = batch.p_y.view(-1).cpu().numpy()
+        targets_np = targets.cpu().numpy()
+        preds_np = preds.cpu().numpy()
+        
+        for i in range(len(p_ids)):
+            p = int(p_ids[i])
+            is_correct = 1 if preds_np[i] == targets_np[i] else 0
+            p_correct[p] = p_correct.get(p, 0) + is_correct
+            p_total[p] = p_total.get(p, 0) + 1
+            
+    # Print the table
+    logging.info("\n" + "="*50)
+    logging.info("      [PER-PARTICIPANT GENERALIZATION REPORT]")
+    logging.info("="*50)
+    logging.info(f"{'Subject ID':<12} | {'Accuracy':<10} | {'Samples':<8}")
+    logging.info("-" * 40)
+    
+    total_samples = 0
+    weighted_acc = 0
+    for p in sorted(p_correct.keys()):
+        acc = p_correct[p] / p_total[p]
+        logging.info(f"Subject #{p:<5} | {acc*100:>8.2f}% | {p_total[p]:<8}")
+        total_samples += p_total[p]
+        weighted_acc += p_correct[p]
+        
+    if total_samples > 0:
+        final_avg = weighted_acc / total_samples
+        logging.info("-" * 40)
+        logging.info(f"{'OVERALL AGG':<12} | {final_avg*100:>8.2f}% | {total_samples:<8}")
+    logging.info("="*50 + "\n")
+
+
 if __name__ == '__main__':
     # Load cmd line args
     args = parse_args()
@@ -178,5 +225,9 @@ if __name__ == '__main__':
             
         logging.info(f"[*] Result Directory : {cfg.run_dir}")
         logging.info("="*50 + "\n")
+        
+        # --- NEW: FINAL PER-PARTICIPANT REPORT ---
+        if USE_PERSON_EXCLUSIVE or USE_STRESS_TEST:
+            final_comprehensive_report(model, loaders[2])
 
     logging.info(f"[*] All done: {datetime.datetime.now()}")

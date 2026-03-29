@@ -214,6 +214,15 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
         logging.info('Checkpoint found, Task already done')
     else:
         logging.info('Start from epoch %s', start_epoch)
+        
+    # --- RIGOROUS SIZE VERIFICATION ---
+    logging.info("\n" + "-"*40)
+    logging.info("      [DATASET SIZE VERIFICATION]")
+    logging.info("-"*40)
+    split_names = ['Train', 'Val', 'Test']
+    for i, loader in enumerate(loaders):
+        logging.info(f"[*] {split_names[i]:<6} samples: {len(loader.dataset)}")
+    logging.info("-"*40 + "\n")
 
     if cfg.wandb.use:
         try:
