@@ -28,7 +28,7 @@ from sklearn.metrics import confusion_matrix
 
 from GNNPlus.utils import cfg_to_dict, flatten_dict, make_wandb_name, dirichlet_energy, mean_average_distance, mean_norm
 
-def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation):
+def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation, cur_epoch):
     model.train()
     optimizer.zero_grad()
     time_start = time.time()
@@ -51,7 +51,16 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation)
             p_pred = preds_dict['participant']
             p_true = batch.p_y
             p_loss = F.cross_entropy(p_pred, p_true.view(-1))
-            loss = loss + 1.0 * p_loss # Lambda = 1.0
+            
+            # --- HARD MODE: WARMUP + HIGH LAMBDA ---
+            # We allow the model to learn gestures for 15 epochs before forcing unlearning.
+            # We use Lambda=5.0 to ensure identity erasure is prioritized.
+            lambda_adv = 5.0 if cur_epoch >= 15 else 0.0
+            loss = loss + lambda_adv * p_loss 
+            
+            # Monitor unlearning progress
+            p_acc = (p_pred.argmax(dim=1) == p_true.view(-1)).float().mean().item()
+            extra_stats['p_acc'] = p_acc
             
         # Optional Contrastive Loss (SupCon)
         if USE_CONTRASTIVE and 'contrastive' in preds_dict:
@@ -244,7 +253,7 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
     for cur_epoch in range(start_epoch, cfg.optim.max_epoch):
         start_time = time.perf_counter()
         train_epoch(loggers[0], loaders[0], model, optimizer, scheduler,
-                    cfg.optim.batch_accumulation)
+                    cfg.optim.batch_accumulation, cur_epoch)
         perf[0].append(loggers[0].write_epoch(cur_epoch))
 
         if is_eval_epoch(cur_epoch):

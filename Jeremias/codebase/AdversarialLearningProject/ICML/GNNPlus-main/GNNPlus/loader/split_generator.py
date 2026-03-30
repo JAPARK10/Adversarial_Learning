@@ -61,11 +61,13 @@ def setup_person_exclusive_split(dataset):
         val_id, test_id = -1, -1
 
     if STRESS_TEST:
-        print("[!] STRESS TEST MODE ENABLED: Training on 8 participants (8-vs-Rest).")
-        # Strategy: Train on the first 8, Val on the 9th, Test on all the rest
+        print("[!] STRESS TEST MODE ENABLED: Strict 8:8 Participant Split.")
+        # Strategy: Train on the first 8 subjects (0-7), Test on the other 8 (8-15)
+        # We use the 9th subject as Val to keep it distinct from purely Train, 
+        # but the user wants scores on the "other 8".
         train_p = unique_p[:8]
         val_p = [unique_p[8]]
-        test_p = unique_p[9:]
+        test_p = unique_p[8:] # Includes the val subject for the "other 8" metrics
     else:
         # Fallback if IDs are invalid or not in dataset
         if val_id not in unique_p or test_id not in unique_p:
