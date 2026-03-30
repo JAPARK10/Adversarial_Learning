@@ -1,0 +1,44 @@
+out_dir: results_lopo
+metric_best: accuracy
+
+wandb:
+  use: False
+  project: rfid_lopo
+
+dataset:
+  format: RFID
+  name: rfid
+  dir: C:\Users\PC\Desktop\AdversarialLearningProject 1\ICML\GNNPlus-main\RFIDDataSet\DataSetLOPO
+  task: graph
+  task_type: classification
+  transductive: False
+  split_mode: lopo-subject
+  node_encoder: False
+  edge_encoder: False
+
+train:
+  mode: custom
+  batch_size: 32
+  eval_period: 1
+  ckpt_period: 100
+
+model:
+  type: custom_gnn
+  loss_fun: cross_entropy
+  graph_pooling: mean
+
+gnn:
+  head: mlp_graph
+  layers_pre_mp: 1
+  layers_mp: 3
+  layers_post_mp: 2
+  dim_inner: 128
+  layer_type: gcn
+  act: relu
+  dropout: 0.2
+  residual: False
+
+optim:
+  optimizer: adam
+  base_lr: 0.001
+  max_epoch: 250

@@ -1,0 +1,19 @@
+# Ignore massive datasets
+RFIDDataSet/
+datasets/
+
+# Ignore outputs and results logs to prevent huge uploads
+results/
+results_lopo/
+*.txt
+!requirements.txt
+training_output.txt
+
+# Python cache and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env/
