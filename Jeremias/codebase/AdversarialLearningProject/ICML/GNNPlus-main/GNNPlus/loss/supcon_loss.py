@@ -10,13 +10,17 @@ class SupConLoss(nn.Module):
         super(SupConLoss, self).__init__()
         self.temperature = temperature
 
-    def forward(self, features, labels):
+    def forward(self, features, labels, temperature=None):
         """
         Args:
             features: hidden vector of shape [bsz, n_views, ...].
             labels: ground truth of shape [bsz].
+            temperature: allows dynamic annealing overrides per batch.
         """
         device = features.device
+        if temperature is None:
+            temperature = self.temperature
+
         if len(features.shape) < 3:
             features = features.unsqueeze(1)
         
@@ -33,7 +37,7 @@ class SupConLoss(nn.Module):
         # Compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)
+            temperature)
         
         # For numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
@@ -51,8 +55,15 @@ class SupConLoss(nn.Module):
         mask = mask * logits_mask
 
         # Compute log_prob
+        # --- HARD NEGATIVE MINING ---
+        # Exponentiate the negative logits to emphasize the tightest (hardest) false boundaries
+        negative_mask = 1 - mask
+        hard_negative_weight = torch.exp(logits) * negative_mask
+        # Scale the hardest negatives up explicitly (Weighting factor = 2.0)
+        weighted_logits = torch.where(negative_mask.bool(), logits * 2.0, logits)
+        
         # For numerical stability, use logsumexp pattern
-        exp_logits = torch.exp(logits) * logits_mask
+        exp_logits = torch.exp(weighted_logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-6)
 
         # Compute mean of log-likelihood over positive

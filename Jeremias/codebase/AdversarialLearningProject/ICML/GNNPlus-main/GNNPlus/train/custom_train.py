@@ -55,6 +55,7 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             
             # --- DANN: LOGISTIC WARMUP ---
             # A smooth transition across training epochs prevents 'Gradient Shock'.
+            # A smooth transition across training epochs prevents 'Gradient Shock'.
             # p goes from 0 to 1 over the course of training.
             max_epochs = cfg.optim.max_epoch
             p = float(cur_epoch) / max_epochs
@@ -64,7 +65,10 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             # Cap the weight at a safe threshold to prevent over-regularization
             lambda_adv = min(lambda_adv, 1.0)
             
-            loss = loss + lambda_adv * p_loss 
+            # Include orthogonal feature regularization if Private Gesture branch is active
+            ortho_penalty = preds_dict.get('ortho_penalty', 0.0)
+            
+            loss = loss + lambda_adv * p_loss + ortho_penalty 
             
             # Monitor unlearning progress
             p_acc = (p_pred.argmax(dim=1) == p_true.view(-1)).float().mean().item()
@@ -74,20 +78,23 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
         # Optional Contrastive Loss (SupCon)
         if USE_CONTRASTIVE and 'contrastive' in preds_dict:
             con_emb = preds_dict['contrastive']
-            criterion_con = SupConLoss(temperature=0.07)
-            con_loss = criterion_con(con_emb, true)
+            criterion_con = SupConLoss()
             
-            # --- SUPCON: LINEAR WARMUP ---
-            # Contrastive learning re-arranges the embedding space fundamentally.
-            # We ease it in so the main GNN backbone can learn basic topology first.
+            # --- SUPCON: TEMPERATURE ANNEALING ---
+            # Instead of a strict linear weight warmup that starves early clustering,
+            # we run Contrastive continually but slowly 'cool' the temperature to freeze clusters
+            # Scale linearly from 0.5 (loose clusters) down to 0.05 (strict tight clusters)
             max_epochs = cfg.optim.max_epoch
-            p_con = float(cur_epoch) / max_epochs
-            # Scale linearly from 0.0 to 0.5
-            lambda_con = 0.5 * p_con
+            annealed_temp = max(0.05, 0.5 * (1.0 - float(cur_epoch) / max_epochs))
+            
+            # Use constant lambda (e.g. 0.1) but use annealed temperature
+            lambda_con = 0.1
+            con_loss = criterion_con(con_emb, true, temperature=annealed_temp)
             
             loss = loss + lambda_con * con_loss
             
             extra_stats['lambda_con'] = lambda_con
+            extra_stats['con_temp'] = annealed_temp
             extra_stats['con_loss'] = con_loss.item()
             
         _true = true.detach().to('cpu', non_blocking=True)
