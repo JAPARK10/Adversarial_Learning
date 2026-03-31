@@ -61,8 +61,8 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             # standard DANN formula: lambda = 2 / (1 + exp(-10 * p)) - 1
             lambda_adv = 2.0 / (1.0 + np.exp(-10.0 * p)) - 1.0
             
-            # Cap the weight at a safe threshold to prevent over-regularization
-            lambda_adv = min(lambda_adv, 0.5)
+            # Cap the weight at a safe threshold to prevent over-regularization (1.0 was empirically best)
+            lambda_adv = min(lambda_adv, 1.4)
             
             loss = loss + lambda_adv * p_loss 
             
