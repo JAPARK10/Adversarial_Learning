@@ -51,7 +51,8 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
         if USE_ADVERSARIAL and 'participant' in preds_dict:
             p_pred = preds_dict['participant']
             p_true = batch.p_y
-            p_loss = F.cross_entropy(p_pred, p_true.view(-1))
+            # Added label smoothing to soften unlearning and prevent complete gradient starvation
+            p_loss = F.cross_entropy(p_pred, p_true.view(-1), label_smoothing=0.1)
             
             # --- DANN: LOGISTIC WARMUP ---
             # A smooth transition across training epochs prevents 'Gradient Shock'.

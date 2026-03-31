@@ -85,9 +85,10 @@ class CustomGNN(torch.nn.Module):
             # Make the temperature a learnable parameter initialized at 0.07
             self.con_temp = torch.nn.Parameter(torch.tensor(0.07))
             self.projection_head = torch.nn.Sequential(
-                torch.nn.Linear(cfg.gnn.dim_inner * 2, cfg.gnn.dim_inner), # dim_inner * 2 due to concat pooling
+                # Fatter hypersphere projection: 128 -> 256 -> 128
+                torch.nn.Linear(cfg.gnn.dim_inner * 2, 256), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
-                torch.nn.Linear(cfg.gnn.dim_inner, 128) 
+                torch.nn.Linear(256, 128) 
             )
 
     def build_conv_model(self, model_type):

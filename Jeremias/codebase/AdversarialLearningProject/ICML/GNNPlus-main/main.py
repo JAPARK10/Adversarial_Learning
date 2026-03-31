@@ -11,6 +11,12 @@ sys.argv = [
 
 import datetime
 import torch
+import warnings
+
+# Suppress PyG's noisy InMemoryDataset warnings
+warnings.filterwarnings("ignore", message=".*InMemoryDataset.*")
+warnings.filterwarnings("ignore", message=".*torch-scatter.*")
+
 try:
     from torch_geometric.data import Data
     from torch_geometric.data.data import DataEdgeAttr
@@ -156,7 +162,7 @@ if __name__ == '__main__':
     else:
         pel_str = f"PX_V{EXCLUDE_VAL_ID}_T{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "PXF"
         
-    tag = f"{adv_str}_{con_str}_{pel_str}"
+    tag = f"{adv_str}_{con_str}_{pel_str}_OPT"
     
     if "results" in cfg.run_dir:
         cfg.run_dir = cfg.run_dir.replace("results", f"results_{tag}")
