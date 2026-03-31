@@ -62,7 +62,7 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             lambda_adv = 2.0 / (1.0 + np.exp(-10.0 * p)) - 1.0
             
             # Cap the weight at a safe threshold to prevent over-regularization (1.0 was empirically best)
-            lambda_adv = min(lambda_adv, 1.4)
+            lambda_adv = min(lambda_adv, 1.0)
             
             loss = loss + lambda_adv * p_loss 
             
