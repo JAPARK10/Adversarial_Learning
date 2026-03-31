@@ -53,15 +53,23 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             p_true = batch.p_y
             p_loss = F.cross_entropy(p_pred, p_true.view(-1))
             
-            # --- HARD MODE: WARMUP + HIGH LAMBDA ---
-            # We allow the model to learn gestures for 15 epochs before forcing unlearning.
-            # We use Lambda=5.0 to ensure identity erasure is prioritized.
-            lambda_adv = 5.0 if cur_epoch >= 15 else 0.0
+            # --- DANN: LOGISTIC WARMUP ---
+            # A smooth transition across training epochs prevents 'Gradient Shock'.
+            # p goes from 0 to 1 over the course of training.
+            max_epochs = cfg.optim.max_epoch
+            p = float(cur_epoch) / max_epochs
+            # standard DANN formula: lambda = 2 / (1 + exp(-10 * p)) - 1
+            lambda_adv = 2.0 / (1.0 + np.exp(-10.0 * p)) - 1.0
+            
+            # Cap the weight at a safe threshold to prevent over-regularization
+            lambda_adv = min(lambda_adv, 1.0)
+            
             loss = loss + lambda_adv * p_loss 
             
             # Monitor unlearning progress
             p_acc = (p_pred.argmax(dim=1) == p_true.view(-1)).float().mean().item()
             extra_stats['p_acc'] = p_acc
+            extra_stats['lambda_adv'] = lambda_adv
             
         # Optional Contrastive Loss (SupCon)
         if USE_CONTRASTIVE and 'contrastive' in preds_dict:

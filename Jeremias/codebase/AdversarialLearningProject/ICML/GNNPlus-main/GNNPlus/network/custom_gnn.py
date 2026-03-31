@@ -59,13 +59,20 @@ class CustomGNN(torch.nn.Module):
 
         # Adversarial Branch
         if USE_ADVERSARIAL:
-            print("[*] Building Adversarial Branch (Participant Discriminator)")
-            self.grl = GradientReversalLayer(alpha=0.5) # Reduced alpha to 0.5 to prevent over-regularization
+            print("[*] Building Adversarial Branch and Private Gesture Branch")
+            self.grl = GradientReversalLayer(alpha=1.0) # Alpha=1.0, the schedule controls the dynamic weight
             # Assuming 16 participants total
             self.participant_discriminator = torch.nn.Sequential(
                 torch.nn.Linear(cfg.gnn.dim_inner * 2, 64), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
                 torch.nn.Linear(64, 18) 
+            )
+            # Private branch for gesture prediction to prevent complete feature starvation
+            self.gesture_private = torch.nn.Sequential(
+                torch.nn.Linear(cfg.gnn.dim_inner, cfg.gnn.dim_inner),
+                torch.nn.BatchNorm1d(cfg.gnn.dim_inner),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(p=0.2)
             )
 
         # Contrastive Branch (Projection Head)
@@ -115,6 +122,10 @@ class CustomGNN(torch.nn.Module):
             mean_pool = global_mean_pool(batch.x, batch.batch)
             max_pool = global_max_pool(batch.x, batch.batch)
             graph_emb = torch.cat([mean_pool, max_pool], dim=1)
+            
+        # Optional private gesture branch processing before the central Exercise Head pooling
+        if USE_ADVERSARIAL and hasattr(self, 'gesture_private'):
+            batch.x = self.gesture_private(batch.x)
         
         # 4. Exercise Head (Main Prediction)
         exercise_pred, true = self.post_mp(batch)
