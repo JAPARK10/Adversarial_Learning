@@ -14,7 +14,8 @@ class RFIDDataset(InMemoryDataset):
             # Updated to the new consolidated path
             root = r'codebase/AdversarialLearningProject/ICML/GNNPlus-main/RFIDDataSet'
         super().__init__(root, transform, pre_transform)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        # In PyTorch 2.6+, weights_only defaults to True, which blocks PyG objects.
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
 
     @property
     def raw_file_names(self):

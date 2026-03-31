@@ -11,6 +11,13 @@ sys.argv = [
 
 import datetime
 import torch
+try:
+    from torch_geometric.data import Data
+    from torch_geometric.data.data import DataEdgeAttr
+    # Allow PyG graph objects in PyTorch 2.6+ (which defaults to weights_only=True)
+    torch.serialization.add_safe_globals([Data, DataEdgeAttr])
+except ImportError:
+    pass
 import logging
 import os
 from dotenv import load_dotenv
