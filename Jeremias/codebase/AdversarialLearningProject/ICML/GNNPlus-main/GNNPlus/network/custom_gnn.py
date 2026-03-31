@@ -125,27 +125,12 @@ class CustomGNN(torch.nn.Module):
             
         # Optional private gesture branch processing before the central Exercise Head pooling
         if USE_ADVERSARIAL and hasattr(self, 'gesture_private'):
-            private_x = self.gesture_private(batch.x)
-            
-            # Pool the private features to compare against the shared graph_emb
-            from torch_geometric.nn import global_mean_pool, global_max_pool
-            p_mean = global_mean_pool(private_x, batch.batch)
-            p_max = global_max_pool(private_x, batch.batch)
-            private_emb = torch.cat([p_mean, p_max], dim=1)
-            
-            # Compute Absolute Cosine Similarity (Orthogonal Penalty)
-            # We detach graph_emb so we don't accidentally train it to run away from private_emb
-            ortho_penalty = torch.mean(torch.abs(F.cosine_similarity(graph_emb.detach(), private_emb)))
-            
-            batch.x = private_x
+            batch.x = self.gesture_private(batch.x)
         
         # 4. Exercise Head (Main Prediction)
         exercise_pred, true = self.post_mp(batch)
         
         preds = {'exercise': exercise_pred}
-        
-        if USE_ADVERSARIAL and hasattr(self, 'gesture_private'):
-            preds['ortho_penalty'] = ortho_penalty
         
         if USE_ADVERSARIAL:
             # Pass through GRL (flips gradient during backprop)
