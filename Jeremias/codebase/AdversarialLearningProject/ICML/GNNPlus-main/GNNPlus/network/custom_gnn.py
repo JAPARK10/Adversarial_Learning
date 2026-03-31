@@ -57,16 +57,9 @@ class CustomGNN(torch.nn.Module):
         GNNHead = register.head_dict[cfg.gnn.head]
         self.post_mp = GNNHead(dim_in=cfg.gnn.dim_inner, dim_out=dim_out)
 
-        # Adversarial Branch
-        if USE_ADVERSARIAL:
-            print("[*] Building Adversarial Branch and Private Gesture Branch")
-            self.grl = GradientReversalLayer(alpha=1.0) # Alpha=1.0, the schedule controls the dynamic weight
-            # Assuming 16 participants total
-            self.participant_discriminator = torch.nn.Sequential(
-                torch.nn.Linear(cfg.gnn.dim_inner * 2, 64), # dim_inner * 2 due to concat pooling
-                torch.nn.ReLU(),
-                torch.nn.Linear(64, 18) 
-            )
+        # Create Private Gesture Branch if any regularizer is active
+        if USE_ADVERSARIAL or USE_CONTRASTIVE:
+            print("[*] Building Private Gesture Branch")
             # Private branch for gesture prediction to prevent complete feature starvation
             self.gesture_private = torch.nn.Sequential(
                 torch.nn.Linear(cfg.gnn.dim_inner, cfg.gnn.dim_inner),
@@ -75,9 +68,22 @@ class CustomGNN(torch.nn.Module):
                 torch.nn.Dropout(p=0.2)
             )
 
+        # Adversarial Branch
+        if USE_ADVERSARIAL:
+            print("[*] Building Adversarial Discriminator")
+            self.grl = GradientReversalLayer(alpha=1.0) # Alpha=1.0, the schedule controls the dynamic weight
+            # Assuming 16 participants total
+            self.participant_discriminator = torch.nn.Sequential(
+                torch.nn.Linear(cfg.gnn.dim_inner * 2, 64), # dim_inner * 2 due to concat pooling
+                torch.nn.ReLU(),
+                torch.nn.Linear(64, 18) 
+            )
+
         # Contrastive Branch (Projection Head)
         if USE_CONTRASTIVE:
             print("[*] Building Contrastive Branch (Projection Head)")
+            # Make the temperature a learnable parameter initialized at 0.07
+            self.con_temp = torch.nn.Parameter(torch.tensor(0.07))
             self.projection_head = torch.nn.Sequential(
                 torch.nn.Linear(cfg.gnn.dim_inner * 2, cfg.gnn.dim_inner), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
@@ -117,16 +123,19 @@ class CustomGNN(torch.nn.Module):
         
         # We need the node features pooled to graph features 
         # (Only calculate once if either branch is active)
+        # We need the node features pooled to graph features BEFORE private branch for Adversarial
         if USE_ADVERSARIAL or USE_CONTRASTIVE:
             from torch_geometric.nn import global_mean_pool, global_max_pool
+            
+        if USE_ADVERSARIAL:
             mean_pool = global_mean_pool(batch.x, batch.batch)
             max_pool = global_max_pool(batch.x, batch.batch)
             graph_emb = torch.cat([mean_pool, max_pool], dim=1)
             
         # Optional private gesture branch processing before the central Exercise Head pooling
-        if USE_ADVERSARIAL and hasattr(self, 'gesture_private'):
+        if (USE_ADVERSARIAL or USE_CONTRASTIVE) and hasattr(self, 'gesture_private'):
             batch.x = self.gesture_private(batch.x)
-        
+            
         # 4. Exercise Head (Main Prediction)
         exercise_pred, true = self.post_mp(batch)
         
@@ -138,8 +147,13 @@ class CustomGNN(torch.nn.Module):
             preds['participant'] = self.participant_discriminator(reverse_emb)
         
         if USE_CONTRASTIVE:
+            # We pool the PRIVATE branch features for contrastive learning
+            mean_pool_priv = global_mean_pool(batch.x, batch.batch)
+            max_pool_priv = global_max_pool(batch.x, batch.batch)
+            priv_graph_emb = torch.cat([mean_pool_priv, max_pool_priv], dim=1)
+            
             # Normalize projection embedding for contrastive distance
-            con_emb = self.projection_head(graph_emb)
+            con_emb = self.projection_head(priv_graph_emb)
             preds['contrastive'] = F.normalize(con_emb, dim=1)
             
         return preds, true

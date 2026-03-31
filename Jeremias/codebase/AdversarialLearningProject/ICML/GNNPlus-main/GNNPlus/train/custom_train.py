@@ -74,9 +74,30 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
         # Optional Contrastive Loss (SupCon)
         if USE_CONTRASTIVE and 'contrastive' in preds_dict:
             con_emb = preds_dict['contrastive']
-            criterion_con = SupConLoss(temperature=0.07)
+            
+            # Fetch the learnable temperature parameter from the CustomGNN model
+            gnn_model = model.model if hasattr(model, 'model') else model
+            # Use max(..., 0.01) to prevent zero division if temp goes negative
+            current_temp = getattr(gnn_model, 'con_temp', torch.tensor(0.07, device=con_emb.device))
+            current_temp = torch.clamp(current_temp, min=0.01) 
+            
+            criterion_con = SupConLoss(temperature=current_temp)
+            # Move criterion to accelerator if not already
+            criterion_con = criterion_con.to(torch.device(cfg.accelerator))
             con_loss = criterion_con(con_emb, true)
-            loss = loss + 0.1 * con_loss # Lambda_Con = 0.1
+            
+            # --- SUPCON: LOGISTIC WARMUP ---
+            # Gradually introduce contrastive pulling so it doesn't collapse early features
+            max_epochs = cfg.optim.max_epoch
+            p = float(cur_epoch) / max_epochs
+            lambda_con = 2.0 / (1.0 + np.exp(-10.0 * p)) - 1.0
+            lambda_con = min(lambda_con, 0.5) # Cap at 0.5 to prevent overpowering cross-entropy
+            
+            loss = loss + lambda_con * con_loss
+            
+            extra_stats['lambda_con'] = lambda_con
+            extra_stats['con_loss'] = con_loss.detach().cpu().item()
+            extra_stats['con_temp'] = current_temp.item()
             
         _true = true.detach().to('cpu', non_blocking=True)
         _pred = pred_score.detach().to('cpu', non_blocking=True)
