@@ -59,13 +59,14 @@ class CustomGNN(torch.nn.Module):
 
         # Adversarial Branch
         if USE_ADVERSARIAL:
+            from torch.nn.utils import spectral_norm
             print("[*] Building Adversarial Branch and Private Gesture Branch")
             self.grl = GradientReversalLayer(alpha=1.0) # Alpha=1.0, the schedule controls the dynamic weight
             # Assuming 16 participants total
             self.participant_discriminator = torch.nn.Sequential(
-                torch.nn.Linear(cfg.gnn.dim_inner * 2, 64), # dim_inner * 2 due to concat pooling
+                spectral_norm(torch.nn.Linear(cfg.gnn.dim_inner * 2, 64)), # dim_inner * 2 due to concat pooling
                 torch.nn.ReLU(),
-                torch.nn.Linear(64, 18) 
+                spectral_norm(torch.nn.Linear(64, 18)) 
             )
             # Private branch for gesture prediction to prevent complete feature starvation
             self.gesture_private = torch.nn.Sequential(

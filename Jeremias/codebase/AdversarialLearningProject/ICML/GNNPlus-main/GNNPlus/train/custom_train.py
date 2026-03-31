@@ -76,7 +76,19 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             con_emb = preds_dict['contrastive']
             criterion_con = SupConLoss(temperature=0.07)
             con_loss = criterion_con(con_emb, true)
-            loss = loss + 0.1 * con_loss # Lambda_Con = 0.1
+            
+            # --- SUPCON: LINEAR WARMUP ---
+            # Contrastive learning re-arranges the embedding space fundamentally.
+            # We ease it in so the main GNN backbone can learn basic topology first.
+            max_epochs = cfg.optim.max_epoch
+            p_con = float(cur_epoch) / max_epochs
+            # Scale linearly from 0.0 to 0.5
+            lambda_con = 0.5 * p_con
+            
+            loss = loss + lambda_con * con_loss
+            
+            extra_stats['lambda_con'] = lambda_con
+            extra_stats['con_loss'] = con_loss.item()
             
         _true = true.detach().to('cpu', non_blocking=True)
         _pred = pred_score.detach().to('cpu', non_blocking=True)
