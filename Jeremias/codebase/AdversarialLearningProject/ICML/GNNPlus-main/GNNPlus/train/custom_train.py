@@ -35,6 +35,7 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
     for iter, batch in enumerate(loader):
         batch.split = 'train'
         batch.to(torch.device(cfg.accelerator))
+        extra_stats = {}
         
         # New multi-head output
         preds_dict, true = model(batch)
@@ -80,7 +81,6 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation,
             optimizer.step()
             optimizer.zero_grad()
             
-        extra_stats = {}
         if cfg.train.eval_smoothing_metrics:
             extra_stats['dirichlet'] = dirichlet_energy(batch.x, batch.edge_index, batch.batch)
             extra_stats['mad'] = mean_average_distance(batch.x, batch.edge_index, batch.batch)
