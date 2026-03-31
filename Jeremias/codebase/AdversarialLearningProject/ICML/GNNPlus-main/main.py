@@ -235,6 +235,21 @@ if __name__ == '__main__':
         
         # --- NEW: FINAL PER-PARTICIPANT REPORT ---
         if USE_PERSON_EXCLUSIVE or USE_STRESS_TEST:
+            # Reload the best model checkpoint before generating the final test report
+            if cfg.train.enable_ckpt and cfg.train.ckpt_best:
+                try:
+                    import glob
+                    ckpt_dir = os.path.join(cfg.run_dir, 'ckpt')
+                    ckpts = glob.glob(f"{ckpt_dir}/*.ckpt")
+                    if ckpts:
+                        # ckpt_clean keeps only the best one, so any remaining file is the best checkpoint
+                        latest_ckpt = max(ckpts, key=os.path.getctime)
+                        ckpt = torch.load(latest_ckpt, map_location='cpu') # load to CPU safely
+                        model.load_state_dict(ckpt['model_state'])
+                        logging.info(f"[*] Reloaded validation-best checkpoint for final test table.")
+                except Exception as e:
+                    logging.warning(f"[W] Failed to reload best checkpoint: {e}")
+            
             final_comprehensive_report(model, loaders[2])
 
     logging.info(f"[*] All done: {datetime.datetime.now()}")
