@@ -2,7 +2,6 @@ import torch.nn as nn
 from torch_geometric.graphgym import cfg
 import torch_geometric.graphgym.register as register
 import torch_geometric.nn as pyg_nn
-from torch_scatter import scatter
 import torch
 import torch.nn.functional as F
 
@@ -15,7 +14,6 @@ from torch_geometric.typing import (
     OptPairTensor,
     OptTensor,
     SparseTensor,
-    torch_sparse,
 )
 
 

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch_geometric.graphgym.config import cfg
 from torch_geometric.graphgym.register import register_node_encoder
 from torch_geometric.nn import GINConv
-from torch_scatter import scatter
+from torch_geometric.utils import scatter
 
 
 class MLP(nn.Module):
