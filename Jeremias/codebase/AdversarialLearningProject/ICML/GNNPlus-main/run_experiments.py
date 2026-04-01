@@ -1,5 +1,6 @@
 import subprocess
 import os
+import sys
 import re
 import time
 import numpy as np
@@ -93,7 +94,7 @@ def run_suite():
                 current_env.update(method["env"])
                 current_env.update(combo["env"])
                 
-                cmd = ["python", RUNNER_SCRIPT, "--cfg", CONFIG_FILE, "--repeat", "1", "seed", str(seed)]
+                cmd = [sys.executable, RUNNER_SCRIPT, "--cfg", CONFIG_FILE, "--repeat", "1", "seed", str(seed)]
                 
                 try:
                     result = subprocess.run(cmd, env=current_env, capture_output=True, text=True, check=True)
@@ -111,6 +112,10 @@ def run_suite():
                     print("DONE.")
                 except subprocess.CalledProcessError as e:
                     print(f"FAILED (Seed {seed})")
+                    print(f"--- ERROR LOG (Seed {seed}) ---")
+                    print(e.stdout)
+                    print(e.stderr)
+                    print("-" * 30)
                     with open(OUTPUT_REPORT, "a") as f:
                         f.write(f"{combo['name']:<35} | {seed:<4} | ERROR\n")
             
