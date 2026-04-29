@@ -25,15 +25,33 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation)
     optimizer.zero_grad()
     time_start = time.time()
     for iter, batch in enumerate(loader):
+        if iter == 0:
+            print("\n--- GRAPH STRUCTURE VERIFICATION ---")
+            print(f"batch.x.shape: {batch.x.shape} (Expected: [N, 2])")
+            print(f"batch.edge_index.shape: {batch.edge_index.shape} (Expected: [2, E], roughly 936 * batch_size edges)")
+            print(f"Nodes per graph: {batch.x.shape[0] / (batch.batch.max().item() + 1)}")
+            print("------------------------------------\n")
         batch.split = 'train'
         batch.to(torch.device(cfg.accelerator))
-        pred, true = model(batch)
+        out = model(batch)
+        if isinstance(out, tuple) and len(out) == 4:
+            pred, true, pred_user, y_user = out
+        elif isinstance(out, tuple) and len(out) == 3:
+            pred, true, extra_stats = out
+        else:
+            pred, true = out
+
         if cfg.dataset.name == 'ogbg-code2':
             loss, pred_score = subtoken_cross_entropy(pred, true)
             _true = true
             _pred = pred_score
         else:
             loss, pred_score = compute_loss(pred, true)
+            if hasattr(cfg, 'adv') and cfg.adv.use and isinstance(out, tuple) and len(out) == 4:
+                loss_u = F.cross_entropy(pred_user, y_user)
+                loss_g = loss.clone()
+                loss = loss + loss_u
+
             _true = true.detach().to('cpu', non_blocking=True)
             _pred = pred_score.detach().to('cpu', non_blocking=True)
         loss.backward()
@@ -46,6 +64,10 @@ def train_epoch(logger, loader, model, optimizer, scheduler, batch_accumulation)
             optimizer.zero_grad()
             
         extra_stats = {}
+        if hasattr(cfg, 'adv') and cfg.adv.use and 'loss_u' in locals():
+            extra_stats['loss_g'] = loss_g.detach().cpu().item()
+            extra_stats['loss_u'] = loss_u.detach().cpu().item()
+            
         if cfg.train.eval_smoothing_metrics:
             extra_stats['dirichlet'] = dirichlet_energy(batch.x, batch.edge_index, batch.batch)
             extra_stats['mad'] = mean_average_distance(batch.x, batch.edge_index, batch.batch)
@@ -118,7 +140,11 @@ def eval_epoch(logger, loader, model, split='val'):
         if cfg.gnn.head == 'inductive_edge':
             pred, true, extra_stats = model(batch)
         else:
-            pred, true = model(batch)
+            out = model(batch)
+            if isinstance(out, tuple) and len(out) == 4:
+                pred, true, pred_user, y_user = out
+            else:
+                pred, true = out
             extra_stats = {}
         
         if cfg.dataset.name == 'ogbg-code2':
@@ -127,6 +153,10 @@ def eval_epoch(logger, loader, model, split='val'):
             _pred = pred_score
         else:
             loss, pred_score = compute_loss(pred, true)
+            if hasattr(cfg, 'adv') and cfg.adv.use and 'pred_user' in locals():
+                loss_u = F.cross_entropy(pred_user, y_user)
+                loss_g = loss.clone()
+                loss = loss + loss_u
             _true = true.detach().to('cpu', non_blocking=True)
             _pred = pred_score.detach().to('cpu', non_blocking=True)
 
@@ -134,6 +164,10 @@ def eval_epoch(logger, loader, model, split='val'):
         all_true.append(_true)
         all_pred.append(_pred)
         # -----------------------------------
+
+        if hasattr(cfg, 'adv') and cfg.adv.use and 'loss_u' in locals():
+            extra_stats['loss_g'] = loss_g.detach().cpu().item()
+            extra_stats['loss_u'] = loss_u.detach().cpu().item()
 
         if cfg.train.eval_smoothing_metrics:
             extra_stats['dirichlet'] = dirichlet_energy(batch.x, batch.edge_index, batch.batch)
@@ -285,7 +319,7 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
             
             if best_epoch == cur_epoch:                    
                 # Create directory if it doesn't exist
-                conf_dir = r"/home/golipos1/GNNPlus/GNNPlus-main/results/Conf"
+                conf_dir = os.path.join(cfg.run_dir, "Conf")
                 if not os.path.exists(conf_dir):
                     os.makedirs(conf_dir)
 
@@ -294,7 +328,11 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
                 for cm_batch in loaders[2]: # Test loader
                     cm_batch.to(torch.device(cfg.accelerator))
                     with torch.no_grad():
-                        cm_pred, cm_true = model(cm_batch)
+                        out = model(cm_batch)
+                        if isinstance(out, tuple) and len(out) >= 2:
+                            cm_pred, cm_true = out[0], out[1]
+                        else:
+                            cm_pred, cm_true = out.pred, out.y
                     y_true_list.append(cm_true.cpu().numpy())
                     y_pred_list.append(cm_pred.argmax(dim=1).cpu().numpy())
                     
@@ -341,6 +379,7 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
                             gtl.attention.gamma.requires_grad:
                         logging.info(f"    {gtl.__class__.__name__} {li}: "
                                      f"gamma={gtl.attention.gamma.item()}")
+    os.makedirs('results', exist_ok=True)
     with open(f'results/{cfg.dataset.name}_result.txt','a') as f:
         f.write(f'{cfg.gnn.layer_type} '+f'residual_{cfg.gnn.residual} '+f'ffn_{cfg.gnn.ffn} '+f'{cfg.gnn.layers_mp} '+f'{cfg.gnn.dim_inner} '+f'{cfg.gnn.dropout} seed_{cfg.seed}: ')
         f.write(f'{best_test}\n')
@@ -439,7 +478,11 @@ def ogblsc_inference(loggers, loaders, model, optimizer=None, scheduler=None):
         all_pred = []
         for batch in loaders[i]:
             batch.to(torch.device(cfg.accelerator))
-            pred, true = model(batch)
+            out = model(batch)
+            if isinstance(out, tuple) and len(out) >= 2:
+                pred, true = out[0], out[1]
+            else:
+                pred, true = out.pred, out.y
             all_true.append(true.detach().to('cpu', non_blocking=True))
             all_pred.append(pred.detach().to('cpu', non_blocking=True))
         all_true, all_pred = torch.cat(all_true), torch.cat(all_pred)

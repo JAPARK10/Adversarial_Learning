@@ -48,6 +48,14 @@ class CustomGNN(torch.nn.Module):
         GNNHead = register.head_dict[cfg.gnn.head]
         self.post_mp = GNNHead(dim_in=cfg.gnn.dim_inner, dim_out=dim_out)
 
+        # Adversarial Head
+        if hasattr(cfg, 'adv') and cfg.adv.use:
+            from GNNPlus.layer.grl import GRL
+            self.grl = GRL(lambda_u=cfg.adv.lambda_u)
+            self.adv_head = torch.nn.Linear(in_features=cfg.gnn.dim_inner, out_features=cfg.adv.num_users)
+        else:
+            self.adv_head = None
+
     def build_conv_model(self, model_type):
         if model_type == 'gatedgcn':
             return GatedGCNLayer
@@ -63,6 +71,38 @@ class CustomGNN(torch.nn.Module):
             raise ValueError("Model {} unavailable".format(model_type))
 
     def forward(self, batch):
-        for module in self.children():
-            batch = module(batch)
-        return batch
+        batch = self.encoder(batch)
+        if hasattr(self, 'pre_mp'):
+            batch = self.pre_mp(batch)
+        batch = self.gnn_layers(batch)
+
+        y_user = batch.y_user if hasattr(batch, 'y_user') else None
+
+        # 1. Pool node embeddings to get graph embedding f_E
+        f_E = self.post_mp.pooling_fun(batch.x, batch.batch)
+
+        # Helper to extract MLP from different GraphGym heads
+        def get_mlp(head):
+            if isinstance(head, torch.nn.Linear):
+                return head
+            if hasattr(head, 'mlp'):
+                return head.mlp
+            elif hasattr(head, 'layer_post_mp'):
+                return head.layer_post_mp
+            else:
+                raise AttributeError("Head missing mlp components")
+
+        # 2. Gesture branch: f_E -> gesture MLP
+        pred = get_mlp(self.post_mp)(f_E)
+        if hasattr(self.post_mp, '_scale_and_shift'):
+            pred = self.post_mp._scale_and_shift(pred)
+
+        # 3. Adversarial branch: f_E -> GRL -> user MLP
+        if self.adv_head is not None:
+            f_E_adv = self.grl(f_E)
+            pred_adv = get_mlp(self.adv_head)(f_E_adv)
+            if hasattr(self.adv_head, '_scale_and_shift'):
+                pred_adv = self.adv_head._scale_and_shift(pred_adv)
+            return pred, batch.y, pred_adv, y_user
+        else:
+            return pred, batch.y

@@ -36,6 +36,7 @@ class RFIDDataset(InMemoryDataset):
 
         class_folders = sorted(os.listdir(self.raw_dir))
         class_to_label = {cls: i for i, cls in enumerate(class_folders)}
+        user_to_idx = {}
 
         # Fixed physical proximity edges
         edge_pairs = [
@@ -63,34 +64,54 @@ class RFIDDataset(InMemoryDataset):
                     subject = parts[1]
                 else:
                     subject = 'unknown'
+                    
+                if subject not in user_to_idx:
+                    user_to_idx[subject] = len(user_to_idx)
 
                 arr = np.load(osp.join(cls_path, file))  # (30, 8, 2)
 
-                # Build node features
-                node_features = []
-                for tag in range(8):
-                    tag_signal = arr[:, tag, :]      # (30, 2)
-                    tag_feat = tag_signal.reshape(-1)  # (60,)
-                    node_features.append(tag_feat)
+                # 1. Node features: 240 nodes, each with 2 features (RSS, phase)
+                x = torch.tensor(arr.reshape(-1, 2), dtype=torch.float)
 
-                x = torch.tensor(node_features, dtype=torch.float)
+                edges_source = []
+                edges_target = []
+
+                # 2. Add spatial edges within each timestamp
+                spatial_pairs = [(0, 1), (1, 0), (2, 3), (3, 2), (4, 5), (5, 4), (6, 7), (7, 6)]
+                for t in range(30):
+                    for src, dst in spatial_pairs:
+                        edges_source.append(t * 8 + src)
+                        edges_target.append(t * 8 + dst)
+
+                # 3. Add temporal K-NN edges across consecutive timestamps
+                K = 3
+                for t in range(1, 30):
+                    prev_feats = x[(t - 1) * 8 : t * 8]  # Shape: (8, 2)
+                    curr_feats = x[t * 8 : (t + 1) * 8]  # Shape: (8, 2)
+
+                    distances = torch.cdist(curr_feats, prev_feats, p=2.0)
+                    for i in range(8):
+                        _, topk_indices = torch.topk(distances[i], K, largest=False)
+                        for neighbor_idx in topk_indices:
+                            # Directed edge from t-1 (neighbor) to t (i)
+                            u = (t - 1) * 8 + neighbor_idx.item()
+                            v = t * 8 + i
+                            edges_source.append(u)
+                            edges_target.append(v)
+
+                edge_index = torch.tensor([edges_source, edges_target], dtype=torch.long)
+
                 y = torch.tensor([label], dtype=torch.long)
+                y_user = torch.tensor([user_to_idx[subject]], dtype=torch.long)
 
                 # For Gcn
                 data = Data(
                     x=x,
                     edge_index=edge_index,
                     y=y,
+                    y_user=y_user,
                     subject=subject
                 )
-
-                # For GatedGcn
-                # data = Data(
-                #     x=x,
-                #     edge_index=edge_index,
-                #     edge_attr=edge_attr,
-                #     y=y
-                # )
 
                 data_list.append(data)
 

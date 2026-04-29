@@ -8,7 +8,7 @@ wandb:
 dataset:
   format: RFID
   name: rfid
-  dir: C:\Users\PC\Desktop\AdversarialLearningProject 1\ICML\GNNPlus-main\RFIDDataSet\DataSetLOPO
+  dir: C:\Users\PC\Desktop\AdversarialLearningProject 1\ICML\Adversarial_Learning\Daniel\RFIDDataSet\DataSetLOPO
   task: graph
   task_type: classification
   transductive: False
@@ -42,3 +42,8 @@ optim:
   optimizer: adam
   base_lr: 0.001
   max_epoch: 250
+
+adv:
+  use: False
+  lambda_u: 1.0
+  num_users: 16
