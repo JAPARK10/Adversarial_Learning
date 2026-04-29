@@ -67,9 +67,11 @@ class GradientReversal(nn.Module):
 
 
 class UserDiscriminator(nn.Module):
-    def __init__(self, in_dim, num_participants, lam=1.0):
+    def __init__(self, in_dim, num_participants, use_grl=True, lam=1.0):
         super().__init__()
-        self.grl = GradientReversal(lam)
+        self.use_grl = use_grl
+        if use_grl:
+            self.grl = GradientReversal(lam)
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, 64),
             nn.ReLU(),
@@ -78,7 +80,15 @@ class UserDiscriminator(nn.Module):
         )
 
     def forward(self, x):
-        return self.mlp(self.grl(x))
+        if self.use_grl:
+            x = self.grl(x)
+        return self.mlp(x)
+
+
+def get_adversarial_lambda(epoch, max_epochs):
+    """Logistic warmup for the adversarial weight lambda."""
+    p = float(epoch) / max_epochs
+    return 2. / (1. + np.exp(-10. * p)) - 1.
 
 
 # ── GCN Model ─────────────────────────────────────────────────────────────────
@@ -101,9 +111,9 @@ class GestureGCN(nn.Module):
         ])
         self.dropout = dropout
         self.post_mp = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
+            nn.Linear(dim_hidden // 2, dim_hidden // 2),
             nn.ReLU(),
-            nn.Linear(dim_hidden, num_classes),
+            nn.Linear(dim_hidden // 2, num_classes),
         )
 
     def forward(self, data):
@@ -122,8 +132,13 @@ class GestureGCN(nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = x + identity
         graph_embed = global_mean_pool(x, batch)
-        out = self.post_mp(graph_embed)
-        return out, graph_embed
+        
+        # [Split] Disentangle into Public (0:64) and Private (64:128) branches
+        z_pub = graph_embed[:, :graph_embed.shape[1] // 2]
+        z_priv = graph_embed[:, graph_embed.shape[1] // 2:]
+        
+        out = self.post_mp(z_pub)
+        return out, z_pub, z_priv
 
 
 # ── Dataset loading ───────────────────────────────────────────────────────────
@@ -166,7 +181,7 @@ def evaluate(model, loader):
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(DEVICE)
-            pred, _ = model(batch)
+            pred, _, _ = model(batch)
             true = batch.y.squeeze(-1)
             probs = torch.softmax(pred, dim=1)
             all_true.extend(true.cpu().numpy())
@@ -185,10 +200,13 @@ def evaluate(model, loader):
 def train_one_combination(train_data, val_data, test_data,
                           test_pid, val_pid, run_idx, total_runs):
     model     = GestureGCN().to(DEVICE)
-    user_disc = UserDiscriminator(DIM_HIDDEN, NUM_PARTICIPANTS, ADV_LAMBDA).to(DEVICE)
+    # Public Disc (with GRL) to scrub identity
+    user_disc_pub = UserDiscriminator(DIM_HIDDEN // 2, NUM_PARTICIPANTS, use_grl=True).to(DEVICE)
+    # Private Disc (no GRL) to attract identity
+    user_disc_priv = UserDiscriminator(DIM_HIDDEN // 2, NUM_PARTICIPANTS, use_grl=False).to(DEVICE)
 
     optimizer = torch.optim.Adam(
-        list(model.parameters()) + list(user_disc.parameters()),
+        list(model.parameters()) + list(user_disc_pub.parameters()) + list(user_disc_priv.parameters()),
         lr=LR, weight_decay=5e-4
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -206,21 +224,44 @@ def train_one_combination(train_data, val_data, test_data,
 
     for epoch in range(NUM_EPOCHS):
         model.train()
-        user_disc.train()
+        user_disc_pub.train()
+        user_disc_priv.train()
+        
+        # Update dynamic lambda for this epoch
+        current_lam = get_adversarial_lambda(epoch, NUM_EPOCHS)
+        user_disc_pub.grl.lam = current_lam
 
         for batch in train_loader:
             batch = batch.to(DEVICE)
             optimizer.zero_grad()
-            pred, graph_embed = model(batch)
-            true = batch.y.squeeze(-1)
-
-            gesture_loss = F.cross_entropy(pred, true)
-
-            user_logits = user_disc(graph_embed)
+            
+            pred, z_pub, z_priv = model(batch)
+            gesture_labels = batch.y.squeeze(-1)
             participant_labels = batch.participant.squeeze(-1)
-            adv_loss = F.cross_entropy(user_logits, participant_labels)
 
-            loss = gesture_loss + ADV_LAMBDA * adv_loss
+            # 1. Gesture Loss
+            gesture_loss = F.cross_entropy(pred, gesture_labels)
+
+            # 2. Public Branch: Identity Scrubbing (Entropy Maximization)
+            user_logits_pub = user_disc_pub(z_pub)
+            # Pull toward uniform distribution (1/N)
+            probs_pub = torch.softmax(user_logits_pub, dim=1)
+            entropy = -torch.mean(torch.sum(probs_pub * torch.log(probs_pub + 1e-8), dim=1))
+            # We want high entropy (confusion), so minimize -entropy
+            adv_loss = -entropy 
+
+            # 3. Private Branch: Identity Attraction
+            user_logits_priv = user_disc_priv(z_priv)
+            priv_loss = F.cross_entropy(user_logits_priv, participant_labels)
+
+            # 4. Orthogonality Loss (Keep branches separate)
+            # Dot product should be zero
+            ortho_loss = torch.mean(torch.abs(torch.sum(z_pub * z_priv, dim=1)))
+
+            # Total Loss
+            # current_lam controls the intensity of the adversarial scrubbing
+            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.1 * ortho_loss)
+            
             loss.backward()
             optimizer.step()
 
@@ -228,7 +269,7 @@ def train_one_combination(train_data, val_data, test_data,
 
         # Live Progress update every 10 epochs
         if (epoch + 1) % 10 == 0:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Loss: {loss.item():.4f} (G: {gesture_loss.item():.4f}, A: {adv_loss.item():.4f})')
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G: {gesture_loss.item():.4f}, Adv: {adv_loss.item():.4f}, Ortho: {ortho_loss.item():.4f}) | Lam: {current_lam:.3f}')
 
         # Check validation accuracy each epoch
         val_acc, _, _ = evaluate(model, val_loader)
@@ -265,7 +306,7 @@ def main():
     # All (test, val) combinations where test != val
     # combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
     #                         for v in range(NUM_PARTICIPANTS) if t != v]
-    combinations = [(13, 10)]
+    combinations = [(15, 14)]
     total_runs = len(combinations)
     print(f'Total combinations: {total_runs} (16 x 15)')
 
