@@ -290,11 +290,12 @@ def train_one_combination(train_data, val_data, test_data,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print(f'\n{"="*30}')
-    print(f'RUNNING ON: {DEVICE}')
+    print(f'\n{"="*50}')
+    print(f' VERSION: IMPROVED (Disentangled + Entropy + Warmup)')
+    print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
-        print(f'GPU NAME:   {torch.cuda.get_device_name(0)}')
-    print(f'{"="*30}\n')
+        print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
+    print(f'{"="*50}\n')
 
     print('Loading dataset...')
     dataset = load_full_dataset()
@@ -353,7 +354,7 @@ def main():
 
     with open(RESULTS_FILE, 'w') as f:
         f.write('LOPO Cross-Validation Results (test+val split)\n')
-        f.write(f'Adversarial lambda: {ADV_LAMBDA}\n')
+        f.write(f'Adversarial lambda: DYNAMIC (Logistic Warmup)\n')
         f.write(f'Epochs per run: {NUM_EPOCHS}\n')
         f.write(f'Total combinations: {total_runs}\n\n')
         for (test_pid, val_pid), acc, f1, auc in zip(
