@@ -28,9 +28,11 @@ from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from itertools import permutations
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-DATASET_PT       = '/Users/farhan/Downloads/projectcourse1/ICML/GNNPlus-main/RFIDDataSet/processed/geometric_data_processed.pt'
+import os
+BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
+DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'geometric_data_processed.pt')
 NUM_PARTICIPANTS = 16
-NUM_GESTURES     = 21
+NUM_GESTURES     = 22
 NUM_EPOCHS       = 150
 BATCH_SIZE       = 32
 LR               = 0.001
@@ -39,6 +41,7 @@ DIM_IN           = 60
 DIM_HIDDEN       = 128
 DROPOUT          = 0.2
 RESULTS_FILE     = 'lopo_results.txt'
+DEVICE           = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -126,7 +129,7 @@ class GestureGCN(nn.Module):
 # ── Dataset loading ───────────────────────────────────────────────────────────
 def load_full_dataset():
     print(f'Loading from: {DATASET_PT}')
-    data_store, slices = torch.load(DATASET_PT)
+    data_store, slices = torch.load(DATASET_PT, weights_only=False)
     num_samples = slices['x'].shape[0] - 1
     dataset = []
     for i in range(num_samples):
@@ -162,6 +165,7 @@ def evaluate(model, loader):
     all_true, all_pred, all_prob = [], [], []
     with torch.no_grad():
         for batch in loader:
+            batch = batch.to(DEVICE)
             pred, _ = model(batch)
             true = batch.y.squeeze(-1)
             probs = torch.softmax(pred, dim=1)
@@ -180,8 +184,8 @@ def evaluate(model, loader):
 
 def train_one_combination(train_data, val_data, test_data,
                           test_pid, val_pid, run_idx, total_runs):
-    model     = GestureGCN()
-    user_disc = UserDiscriminator(DIM_HIDDEN, NUM_PARTICIPANTS, ADV_LAMBDA)
+    model     = GestureGCN().to(DEVICE)
+    user_disc = UserDiscriminator(DIM_HIDDEN, NUM_PARTICIPANTS, ADV_LAMBDA).to(DEVICE)
 
     optimizer = torch.optim.Adam(
         list(model.parameters()) + list(user_disc.parameters()),
@@ -205,6 +209,7 @@ def train_one_combination(train_data, val_data, test_data,
         user_disc.train()
 
         for batch in train_loader:
+            batch = batch.to(DEVICE)
             optimizer.zero_grad()
             pred, graph_embed = model(batch)
             true = batch.y.squeeze(-1)
@@ -220,6 +225,10 @@ def train_one_combination(train_data, val_data, test_data,
             optimizer.step()
 
         scheduler.step()
+
+        # Live Progress update every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Loss: {loss.item():.4f} (G: {gesture_loss.item():.4f}, A: {adv_loss.item():.4f})')
 
         # Check validation accuracy each epoch
         val_acc, _, _ = evaluate(model, val_loader)
@@ -240,6 +249,12 @@ def train_one_combination(train_data, val_data, test_data,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
+    print(f'\n{"="*30}')
+    print(f'RUNNING ON: {DEVICE}')
+    if DEVICE.type == 'cuda':
+        print(f'GPU NAME:   {torch.cuda.get_device_name(0)}')
+    print(f'{"="*30}\n')
+
     print('Loading dataset...')
     dataset = load_full_dataset()
     print(f'Total samples: {len(dataset)}')
