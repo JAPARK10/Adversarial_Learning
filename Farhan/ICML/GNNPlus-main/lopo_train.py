@@ -248,8 +248,9 @@ def main():
     print(f'Participants found: {pids}')
 
     # All (test, val) combinations where test != val
-    combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
-                            for v in range(NUM_PARTICIPANTS) if t != v]
+    # combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
+    #                         for v in range(NUM_PARTICIPANTS) if t != v]
+    combinations = [(13, 10)]
     total_runs = len(combinations)
     print(f'Total combinations: {total_runs} (16 x 15)')
 
