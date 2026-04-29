@@ -1,0 +1,1 @@
+gcn residual_True ffn_True 3 128 0.2 seed_0: test_accuracy: 0.9424  [adv_lambda=0.5]
