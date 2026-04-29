@@ -23,11 +23,12 @@ import sys
 import shutil
 import numpy as np
 
-# ── CONFIGURE THESE PATHS ─────────────────────────────────────────────────────
-DATASET_DIR   = '/Users/farhan/Downloads/projectcourse1/DataSet3m'
-OUTPUT_DIR    = '/Users/farhan/Downloads/projectcourse1/ICML/GNNPlus-main/RFIDDataSet/raw'
-SAVEASTENSORS = '/Users/farhan/Downloads/projectcourse1/SaveAsTensors'
-# ─────────────────────────────────────────────────────────────────────────────
+# ── ALIGNED PATHS ─────────────────────────────────────────────────────────────
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+DATASET_DIR   = os.path.join(BASE_DIR, 'DataSet3m')
+OUTPUT_DIR    = os.path.join(BASE_DIR, 'ICML', 'GNNPlus-main', 'RFIDDataSet', 'raw')
+SAVEASTENSORS = os.path.join(BASE_DIR, 'SaveAsTensors')
+# ──────────────────────────────────────────────────────────────────────────────
 
 sys.path.insert(0, SAVEASTENSORS)
 
@@ -84,7 +85,7 @@ def process_participant(participant_folder, participant_idx):
     os.chdir(original_cwd)
 
     # ── move tensors from temp_dir/SavedTensor/ to OUTPUT_DIR ───────────
-    saved_tensor_dir = '/Users/farhan/Downloads/projectcourse1/SaveAsTensors/SavedTensor'
+    saved_tensor_dir = os.path.join(SAVEASTENSORS, 'SavedTensor')
     if not os.path.exists(saved_tensor_dir):
         print(f'  WARNING: SavedTensor folder not found in {temp_dir}')
         shutil.rmtree(temp_dir, ignore_errors=True)
