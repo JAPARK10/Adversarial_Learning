@@ -151,6 +151,13 @@ if __name__ == '__main__':
     # Load cmd line args
     args = parse_args()
 
+    # Set up global logging to file
+    log_format = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    file_handler = logging.FileHandler('training.log', mode='a')
+    file_handler.setFormatter(log_format)
+    logging.getLogger().addHandler(file_handler)
+    logging.info(f"\n\n{'#'*60}\n# NEW TRAINING SESSION STARTED\n{'#'*60}\n")
+
     # Determine combinations to run
     if USE_FULL_LOPO_CYCLE:
         # Override individual IDs and run all 16 subjects
@@ -161,6 +168,9 @@ if __name__ == '__main__':
         # Run the single pair defined in .env
         combinations = [(int(EXCLUDE_TEST_ID), int(EXCLUDE_VAL_ID))]
         logging.info(f"[*] LOPO MODE: Single pair (T:{EXCLUDE_TEST_ID}, V:{EXCLUDE_VAL_ID})")
+
+    # Track results across combinations
+    lopo_results = []
 
     # Start the execution loop
     for test_id, val_id in combinations:
@@ -234,5 +244,40 @@ if __name__ == '__main__':
             
             # This generates the detailed accuracy table for the test subject
             final_comprehensive_report(model, loaders[2])
+            
+            # Store result for the final summary file
+            if best_stats:
+                lopo_results.append({
+                    'test_id': test_id,
+                    'val_id': val_id,
+                    'acc': best_stats.get('accuracy', 0),
+                    'f1': best_stats.get('f1', 0)
+                })
+
+    # WRITE FINAL SUMMARY FILE
+    if len(lopo_results) > 0:
+        summary_path = 'lopo_summary.txt'
+        with open(summary_path, 'w') as f:
+            f.write("LOPO Cross-Validation Summary (Jeremias Version)\n")
+            f.write(f"Date: {datetime.datetime.now()}\n")
+            f.write("="*50 + "\n")
+            f.write(f"{'TestID':<8} {'ValID':<8} {'Acc':<10} {'F1':<10}\n")
+            f.write("-" * 40 + "\n")
+            
+            total_acc = 0
+            total_f1 = 0
+            for r in lopo_results:
+                f.write(f"p{r['test_id']:02d}     p{r['val_id']:02d}     {r['acc']:.4f}     {r['f1']:.4f}\n")
+                total_acc += r['acc']
+                total_f1 += r['f1']
+            
+            avg_acc = total_acc / len(lopo_results)
+            avg_f1 = total_f1 / len(lopo_results)
+            
+            f.write("-" * 40 + "\n")
+            f.write(f"{'MEAN':<17} {avg_acc:.4f}     {avg_f1:.4f}\n")
+            f.write("="*50 + "\n")
+        
+        logging.info(f"\n[*] LOPO Summary saved to: {summary_path}")
 
     logging.info(f"[*] All runs completed: {datetime.datetime.now()}")
