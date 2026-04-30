@@ -175,7 +175,7 @@ def split_three_way(dataset, test_pid, val_pid):
     """Split into train / val / test by participant ID."""
     train, val, test = [], [], []
     for d in dataset:
-        pid = d.participant.item()
+        pid = d.p_y.item()
         if pid == test_pid:
             test.append(d)
         elif pid == val_pid:
@@ -247,7 +247,7 @@ def train_one_combination(train_data, val_data, test_data,
             
             pred, z_pub, z_priv = model(batch)
             gesture_labels = batch.y.squeeze(-1)
-            participant_labels = batch.participant.squeeze(-1)
+            participant_labels = batch.p_y.squeeze(-1)
 
             # 1. Gesture Loss
             gesture_loss = F.cross_entropy(pred, gesture_labels)
@@ -313,7 +313,7 @@ def main():
     dataset = load_full_dataset()
     print(f'Total samples: {len(dataset)}')
 
-    pids = sorted(set(d.participant.item() for d in dataset))
+    pids = sorted(set(d.p_y.item() for d in dataset))
     print(f'Participants found: {pids}')
 
     # All (test, val) combinations where test != val
