@@ -38,7 +38,7 @@ BATCH_SIZE       = 32
 LR               = 0.001
 ADV_LAMBDA       = 0.5
 DIM_IN           = 60
-DIM_HIDDEN       = 128
+DIM_HIDDEN       = 256
 DROPOUT          = 0.2
 RESULTS_FILE     = 'lopo_results.txt'
 DEVICE           = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -150,7 +150,14 @@ def load_full_dataset():
     for i in range(num_samples):
         d = Data()
         s, e = slices['x'][i].item(), slices['x'][i+1].item()
-        d.x = data_store.x[s:e]
+        d.x = data_store.x[s:e].clone() # Clone to avoid modifying the original data_store
+
+        # [Normalization] Standardize features to zero mean and unit variance per sample
+        # This removes the absolute magnitude shortcut for identity detection
+        x_mean = d.x.mean()
+        x_std = d.x.std() + 1e-7
+        d.x = (d.x - x_mean) / x_std
+
         s, e = slices['edge_index'][i].item(), slices['edge_index'][i+1].item()
         d.edge_index = data_store.edge_index[:, s:e]
         s, e = slices['y'][i].item(), slices['y'][i+1].item()
@@ -242,25 +249,27 @@ def train_one_combination(train_data, val_data, test_data,
             # 1. Gesture Loss
             gesture_loss = F.cross_entropy(pred, gesture_labels)
 
-            # 2. Public Branch: Identity Scrubbing (Entropy Maximization)
+            # 2. Public Branch: Identity Scrubbing (DANN approach)
+            # The Discriminator tries to IDENTIFY (CrossEntropy).
+            # The GRL flips the gradient for the GNN to HIDE.
             user_logits_pub = user_disc_pub(z_pub)
-            # Pull toward uniform distribution (1/N)
-            probs_pub = torch.softmax(user_logits_pub, dim=1)
-            entropy = -torch.mean(torch.sum(probs_pub * torch.log(probs_pub + 1e-8), dim=1))
-            # We want high entropy (confusion), so minimize -entropy
-            adv_loss = -entropy 
+            adv_loss = F.cross_entropy(user_logits_pub, participant_labels)
 
             # 3. Private Branch: Identity Attraction
             user_logits_priv = user_disc_priv(z_priv)
             priv_loss = F.cross_entropy(user_logits_priv, participant_labels)
 
-            # 4. Orthogonality Loss (Keep branches separate)
-            # Dot product should be zero
-            ortho_loss = torch.mean(torch.abs(torch.sum(z_pub * z_priv, dim=1)))
+            # 4. Orthogonality Loss (Full Cross-Correlation)
+            # We want to ensure that NO feature in z_pub correlates with ANY feature in z_priv
+            # Across the whole batch: (Z_pub.T @ Z_priv) should be zero matrix
+            # Subtract means to get covariance
+            z_pub_cent = z_pub - z_pub.mean(dim=0, keepdim=True)
+            z_priv_cent = z_priv - z_priv.mean(dim=0, keepdim=True)
+            corr_matrix = torch.matmul(z_pub_cent.t(), z_priv_cent)
+            ortho_loss = torch.norm(corr_matrix, p='fro') # Frobenius norm of the cross-correlation
 
             # Total Loss
-            # current_lam controls the intensity of the adversarial scrubbing
-            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.1 * ortho_loss)
+            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.01 * ortho_loss)
             
             loss.backward()
             optimizer.step()
@@ -305,9 +314,9 @@ def main():
     print(f'Participants found: {pids}')
 
     # All (test, val) combinations where test != val
-    combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
-                            for v in range(NUM_PARTICIPANTS) if t != v]
-    # combinations = [(15, 14)]
+    # combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
+    #                         for v in range(NUM_PARTICIPANTS) if t != v]
+    combinations = [(15, 14)]
     total_runs = len(combinations)
     print(f'Total combinations: {total_runs} (16 x 15)')
 
