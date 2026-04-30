@@ -22,7 +22,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
 from torch_geometric.nn import BatchNorm
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from itertools import permutations
