@@ -165,8 +165,8 @@ def load_full_dataset():
         d.edge_index = data_store.edge_index[:, s:e]
         s, e = slices['y'][i].item(), slices['y'][i+1].item()
         d.y = data_store.y[s:e]
-        s, e = slices['participant'][i].item(), slices['participant'][i+1].item()
-        d.participant = data_store.participant[s:e]
+        s, e = slices['p_y'][i].item(), slices['p_y'][i+1].item()
+        d.p_y = data_store.p_y[s:e]
         dataset.append(d)
     return dataset
 
