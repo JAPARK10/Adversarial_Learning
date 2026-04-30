@@ -34,7 +34,7 @@ DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'geometric
 NUM_PARTICIPANTS = 16
 NUM_GESTURES     = 22
 NUM_EPOCHS       = 150
-BATCH_SIZE       = 32
+BATCH_SIZE       = 128
 LR               = 0.001
 ADV_LAMBDA       = 0.5
 DIM_IN           = 60
@@ -98,16 +98,16 @@ class GestureGCN(nn.Module):
         super().__init__()
         self.pre_mp = nn.Linear(dim_in, dim_hidden)
         self.convs = nn.ModuleList([
-            GCNConv(dim_hidden, dim_hidden) for _ in range(3)
+            GCNConv(dim_hidden, dim_hidden) for _ in range(2)
         ])
         self.bns = nn.ModuleList([
-            BatchNorm(dim_hidden) for _ in range(3)
+            BatchNorm(dim_hidden) for _ in range(2)
         ])
         self.ff1 = nn.ModuleList([
-            nn.Linear(dim_hidden, dim_hidden * 2) for _ in range(3)
+            nn.Linear(dim_hidden, dim_hidden * 2) for _ in range(2)
         ])
         self.ff2 = nn.ModuleList([
-            nn.Linear(dim_hidden * 2, dim_hidden) for _ in range(3)
+            nn.Linear(dim_hidden * 2, dim_hidden) for _ in range(2)
         ])
         self.dropout = dropout
         self.post_mp = nn.Sequential(
@@ -131,7 +131,9 @@ class GestureGCN(nn.Module):
             x = ff2(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = x + identity
-        graph_embed = global_mean_pool(x, batch)
+        
+        # Using Add pooling (preserves structural energy)
+        graph_embed = global_add_pool(x, batch)
         
         # [Split] Disentangle into Public (0:64) and Private (64:128) branches
         z_pub = graph_embed[:, :graph_embed.shape[1] // 2]
@@ -300,7 +302,7 @@ def train_one_combination(train_data, val_data, test_data,
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print(f'\n{"="*50}')
-    print(f' VERSION: IMPROVED (Disentangled + Entropy + Warmup)')
+    print(f' VERSION: IMPROVED (Disentangled + DANN + Normalization)')
     print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
@@ -316,9 +318,10 @@ def main():
     # All (test, val) combinations where test != val
     # combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
     #                         for v in range(NUM_PARTICIPANTS) if t != v]
-    combinations = [(15, 14)]
+    # combinations = [(15, 14)]
+    combinations = [(i, (i + 1) % NUM_PARTICIPANTS) for i in range(NUM_PARTICIPANTS)]
     total_runs = len(combinations)
-    print(f'Total combinations: {total_runs} (16 x 15)')
+    print(f'Total combinations: {total_runs} (16 pairs)')
 
     all_acc, all_f1, all_auc = [], [], []
 
