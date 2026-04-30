@@ -36,3 +36,6 @@ def extended_cfg(cfg):
     cfg.train.ckpt_best = False
     
     cfg.train.eval_smoothing_metrics = False
+
+    # Total parameters in the model
+    cfg.params = 0
