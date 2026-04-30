@@ -1,7 +1,7 @@
 dataset:
   format: RFID
   name: rfid
-  dir: ../../SaveAsTensors/SavedTensor
+  dir: ./RFIDDataSet
   num_workers: 4
   task: graph
   task_type: classification

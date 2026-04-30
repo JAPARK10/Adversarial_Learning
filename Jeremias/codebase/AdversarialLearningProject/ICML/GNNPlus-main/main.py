@@ -35,6 +35,7 @@ USE_CONTRASTIVE = os.getenv("USE_CONTRASTIVE_LEARNING", "false").lower() == "tru
 USE_PERSON_EXCLUSIVE = os.getenv("USE_PERSON_EXCLUSIVE_SPLIT", "false").lower() == "true"
 EXCLUDE_VAL_ID = os.getenv("EXCLUDE_PERSON_ID_VAL", "15")
 EXCLUDE_TEST_ID = os.getenv("EXCLUDE_PERSON_ID_TEST", "16")
+USE_FULL_LOPO_CYCLE = os.getenv("USE_FULL_LOPO_CYCLE", "false").lower() == "true"
 USE_STRESS_TEST = os.getenv("USE_STRESS_TEST", "false").lower() == "true"
 
 import GNNPlus  # noqa, register custom modules
@@ -149,98 +150,74 @@ def final_comprehensive_report(model, loader):
 if __name__ == '__main__':
     # Load cmd line args
     args = parse_args()
-    # Load config file
-    set_cfg(cfg)
-    load_cfg(cfg, args)
-    
-    # Dynamic Naming for Run Directory
-    adv_str = "AdvT" if USE_ADVERSARIAL else "AdvF"
-    con_str = "ConT" if USE_CONTRASTIVE else "ConF"
-    
-    if USE_STRESS_TEST:
-        pel_str = "STRESS_TEST"
-    else:
-        pel_str = f"PX_V{EXCLUDE_VAL_ID}_T{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "PXF"
-        
-    tag = f"{adv_str}_{con_str}_{pel_str}_OPT"
-    
-    if "results" in cfg.run_dir:
-        cfg.run_dir = cfg.run_dir.replace("results", f"results_{tag}")
-    else:
-        cfg.run_dir = f"{cfg.run_dir}_{tag}"
-        
-    print(f"[*] Run Directory: {cfg.run_dir}")
-    print("gnn dropout: ", cfg.gnn.dropout)
 
-    # Set Pytorch environment
-    torch.set_num_threads(cfg.num_threads)
+    # Determine combinations to run
+    if USE_FULL_LOPO_CYCLE:
+        # Override individual IDs and run all 16 subjects
+        num_participants = 16
+        combinations = [(i, (i + 1) % num_participants) for i in range(num_participants)]
+        logging.info(f"[*] LOPO MODE: Full 16-run cycle enabled.")
+    else:
+        # Run the single pair defined in .env
+        combinations = [(int(EXCLUDE_TEST_ID), int(EXCLUDE_VAL_ID))]
+        logging.info(f"[*] LOPO MODE: Single pair (T:{EXCLUDE_TEST_ID}, V:{EXCLUDE_VAL_ID})")
 
-    # Repeat for multiple experiment runs
-    for run_id, seed, split_index in zip(*run_loop_settings()):
-        # Set configurations for each run
-        set_printing()
-        cfg.dataset.split_index = split_index
-        cfg.seed = seed
-        cfg.run_id = run_id
-        seed_everything(cfg.seed)
-        auto_select_device()
-        if cfg.pretrained.dir:
-            cfg = load_pretrained_model_cfg(cfg)
-        logging.info(f"[*] Run ID {run_id}: seed={cfg.seed}, "
-                     f"split_index={cfg.dataset.split_index}")
-        logging.info(f"    Starting now: {datetime.datetime.now()}")
+    # Start the execution loop
+    for test_id, val_id in combinations:
+        # Set configurations for this specific LOPO pair
+        set_cfg(cfg)
+        load_cfg(cfg, args)
         
-        # Set machine learning pipeline
-        loaders = create_loader()
-        loggers = create_logger()
-        model = create_model()
-        if cfg.pretrained.dir:
-            model = init_model_from_pretrained(
-                model, cfg.pretrained.dir, cfg.pretrained.freeze_main,
-                cfg.pretrained.reset_prediction_head, seed=cfg.seed
-            )
+        # Inject IDs into environment so split_generator can see them
+        os.environ["EXCLUDE_PERSON_ID_TEST"] = str(test_id)
+        os.environ["EXCLUDE_PERSON_ID_VAL"] = str(val_id)
         
-        # Ensure model is on the correct device (GPU)
-        model.to(torch.device(cfg.accelerator))
-        optimizer = create_optimizer(model.parameters(),
-                                     new_optimizer_config(cfg))
-        scheduler = create_scheduler(optimizer, new_scheduler_config(cfg))
-        # Print model info
-        logging.info(model)
-        logging.info(cfg)
-        cfg.params = params_count(model)
-        logging.info('Num parameters: %s', cfg.params)
-        # Start training
-        if cfg.train.mode == 'standard':
-            if cfg.wandb.use:
-                logging.warning("[W] WandB logging is not supported with the "
-                                "default train.mode, set it to `custom`")
-            datamodule = GraphGymDataModule()
-            train(model, datamodule, logger=True)
+        # Dynamic Naming for Run Directory
+        adv_str = "AdvT" if USE_ADVERSARIAL else "AdvF"
+        con_str = "ConT" if USE_CONTRASTIVE else "ConF"
+        
+        if USE_STRESS_TEST:
+            pel_str = "STRESS_TEST"
         else:
-            best_stats = train_dict[cfg.train.mode](loggers, loaders, model, optimizer,
-                                                    scheduler)
-    
-        # Final Summary Report
-        logging.info("\n" + "="*50)
-        logging.info("      [*] FINAL EXPERIMENT SUMMARY [*]")
-        logging.info("="*50)
-        
-        mode_str = "Stress Test (2-Train / 14-Test)" if USE_STRESS_TEST else ("Zero-Shot (New Person)" if USE_PERSON_EXCLUSIVE else "Random Split (Standard)")
-        subject_str = "Train[#0,#1] | Test[Rest]" if USE_STRESS_TEST else (f"Excluded Subject: #{EXCLUDE_TEST_ID}" if USE_PERSON_EXCLUSIVE else "All Subjects mixed")
-        
-        logging.info(f"[*] Evaluation Mode  : {mode_str}")
-        logging.info(f"[*] Subject Context  : {subject_str}")
-        
-        if (USE_PERSON_EXCLUSIVE or USE_STRESS_TEST) and best_stats:
-            logging.info(f"[*] BEST TEST ACC    : {best_stats.get('accuracy', 0)*100:.2f}%")
-            logging.info(f"[*] BEST TEST F1     : {best_stats.get('f1', 0):.4f}")
+            pel_str = f"PX_V{val_id}_T{test_id}" if USE_PERSON_EXCLUSIVE else "PXF"
             
-        logging.info(f"[*] Result Directory : {cfg.run_dir}")
-        logging.info("="*50 + "\n")
+        tag = f"{adv_str}_{con_str}_{pel_str}_OPT"
         
-        # --- NEW: FINAL PER-PARTICIPANT REPORT ---
-        if USE_PERSON_EXCLUSIVE or USE_STRESS_TEST:
+        if "results" in cfg.run_dir:
+            cfg.run_dir = cfg.run_dir.replace("results", f"results_{tag}")
+        else:
+            cfg.run_dir = f"{cfg.run_dir}_{tag}"
+            
+        logging.info(f"\n{'='*60}")
+        logging.info(f"[*] STARTING RUN: Test=p{test_id:02d}, Val=p{val_id:02d}")
+        logging.info(f"[*] Run Directory: {cfg.run_dir}")
+        logging.info(f"{'='*60}\n")
+
+        # Set Pytorch environment
+        torch.set_num_threads(cfg.num_threads)
+
+        # Inner GraphGym repeat loop (usually just 1)
+        for run_id, seed, split_index in zip(*run_loop_settings()):
+            set_printing()
+            cfg.dataset.split_index = split_index
+            cfg.seed = seed
+            cfg.run_id = run_id
+            seed_everything(cfg.seed)
+            auto_select_device()
+            
+            # Load machine learning pipeline
+            # Note: create_loader calls split_generator.prepare_splits internally
+            loaders = create_loader()
+            loggers = create_logger()
+            model = create_model()
+            
+            model.to(torch.device(cfg.accelerator))
+            optimizer = create_optimizer(model.parameters(), new_optimizer_config(cfg))
+            scheduler = create_scheduler(optimizer, new_scheduler_config(cfg))
+            
+            # Start training
+            best_stats = train_dict[cfg.train.mode](loggers, loaders, model, optimizer, scheduler)
+        
             # Reload the best model checkpoint before generating the final test report
             if cfg.train.enable_ckpt and cfg.train.ckpt_best:
                 try:
@@ -248,14 +225,14 @@ if __name__ == '__main__':
                     ckpt_dir = os.path.join(cfg.run_dir, 'ckpt')
                     ckpts = glob.glob(f"{ckpt_dir}/*.ckpt")
                     if ckpts:
-                        # ckpt_clean keeps only the best one, so any remaining file is the best checkpoint
                         latest_ckpt = max(ckpts, key=os.path.getctime)
-                        ckpt = torch.load(latest_ckpt, map_location='cpu') # load to CPU safely
+                        ckpt = torch.load(latest_ckpt, map_location='cpu', weights_only=False)
                         model.load_state_dict(ckpt['model_state'])
-                        logging.info(f"[*] Reloaded validation-best checkpoint for final test table.")
+                        logging.info(f"[*] Reloaded best checkpoint for final report.")
                 except Exception as e:
                     logging.warning(f"[W] Failed to reload best checkpoint: {e}")
             
+            # This generates the detailed accuracy table for the test subject
             final_comprehensive_report(model, loaders[2])
 
-    logging.info(f"[*] All done: {datetime.datetime.now()}")
+    logging.info(f"[*] All runs completed: {datetime.datetime.now()}")
