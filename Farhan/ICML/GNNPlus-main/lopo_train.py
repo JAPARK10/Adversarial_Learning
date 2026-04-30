@@ -34,7 +34,7 @@ DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'geometric
 NUM_PARTICIPANTS = 16
 NUM_GESTURES     = 22
 NUM_EPOCHS       = 150
-BATCH_SIZE       = 128
+BATCH_SIZE       = 64
 LR               = 0.001
 ADV_LAMBDA       = 0.5
 DIM_IN           = 60
@@ -73,10 +73,10 @@ class UserDiscriminator(nn.Module):
         if use_grl:
             self.grl = GradientReversal(lam)
         self.mlp = nn.Sequential(
-            nn.Linear(in_dim, 64),
+            nn.Linear(in_dim, 128),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(64, num_participants),
+            nn.Linear(128, num_participants),
         )
 
     def forward(self, x):
@@ -97,17 +97,18 @@ class GestureGCN(nn.Module):
                  num_classes=NUM_GESTURES, dropout=DROPOUT):
         super().__init__()
         self.pre_mp = nn.Linear(dim_in, dim_hidden)
+        # 3-layer GCN for more representational room
         self.convs = nn.ModuleList([
-            GCNConv(dim_hidden, dim_hidden) for _ in range(2)
+            GCNConv(dim_hidden, dim_hidden) for _ in range(3)
         ])
         self.bns = nn.ModuleList([
-            BatchNorm(dim_hidden) for _ in range(2)
+            BatchNorm(dim_hidden) for _ in range(3)
         ])
         self.ff1 = nn.ModuleList([
-            nn.Linear(dim_hidden, dim_hidden * 2) for _ in range(2)
+            nn.Linear(dim_hidden, dim_hidden * 2) for _ in range(3)
         ])
         self.ff2 = nn.ModuleList([
-            nn.Linear(dim_hidden * 2, dim_hidden) for _ in range(2)
+            nn.Linear(dim_hidden * 2, dim_hidden) for _ in range(3)
         ])
         self.dropout = dropout
         self.post_mp = nn.Sequential(
@@ -270,8 +271,8 @@ def train_one_combination(train_data, val_data, test_data,
             corr_matrix = torch.matmul(z_pub_cent.t(), z_priv_cent)
             ortho_loss = torch.norm(corr_matrix, p='fro') # Frobenius norm of the cross-correlation
 
-            # Total Loss
-            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.01 * ortho_loss)
+            # Total Loss (Reduced Ortho weight to 0.001)
+            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.001 * ortho_loss)
             
             loss.backward()
             optimizer.step()
