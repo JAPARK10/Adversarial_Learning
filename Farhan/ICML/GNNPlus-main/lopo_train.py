@@ -330,30 +330,36 @@ def train_one_combination(train_data, val_data, test_data,
             batch = batch.to(DEVICE)
             optimizer.zero_grad()
             
-            # --- Mixup Logic ---
+            # --- Mixup Logic (Graph-Level Shuffling) ---
             if USE_MIXUP and model.training:
                 mix_lam = np.random.beta(1.0, 1.0)
-                index = torch.randperm(batch.x.size(0)).to(DEVICE)
+                batch_size = batch.num_graphs
+                graph_index = torch.randperm(batch_size).to(DEVICE)
                 
-                # We mix features (x) and labels (y, p_y)
-                # Note: Mixup on graphs usually happens at the node/embedding level
-                mixed_x = mix_lam * batch.x + (1 - mix_lam) * batch.x[index]
+                # Expand graph-level shuffle to node-level
+                # Since each graph has exactly 8 nodes
+                node_index = torch.arange(batch.x.size(0)).to(DEVICE)
+                for i in range(batch_size):
+                    node_index[i*8:(i+1)*8] = torch.arange(graph_index[i]*8, (graph_index[i]+1)*8).to(DEVICE)
+                
+                mixed_x = mix_lam * batch.x + (1 - mix_lam) * batch.x[node_index]
                 
                 out_g, out_p, z_pub, z_pri = model(mixed_x, batch.edge_index, batch.batch, current_lam)
                 
-                # Mixed Gesture Loss
+                # Mixed Gesture Loss (labels are graph-level)
                 loss_gesture = mix_lam * criterion_gesture(out_g, batch.y.squeeze(-1)) + \
-                               (1 - mix_lam) * criterion_gesture(out_g, batch.y[index].squeeze(-1))
+                               (1 - mix_lam) * criterion_gesture(out_g, batch.y[graph_index].squeeze(-1))
                 
                 # Mixed Identity Loss
                 loss_adv_per_sample = mix_lam * torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none') + \
-                                      (1 - mix_lam) * torch.nn.functional.cross_entropy(out_p, batch.p_y[index].squeeze(-1), reduction='none')
+                                      (1 - mix_lam) * torch.nn.functional.cross_entropy(out_p, batch.p_y[graph_index].squeeze(-1), reduction='none')
             else:
+                graph_index = torch.arange(batch.num_graphs).to(DEVICE) # Default for non-mixup
                 out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
                 loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
                 loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
             
-            # Monitoring Training Accuracy (on original labels if not mixed, or dominant label if mixed)
+            # Monitoring Training Accuracy (on dominant label)
             pred_g = out_g.argmax(dim=1)
             total_train_correct += (pred_g == batch.y.squeeze(-1)).sum().item()
             total_train_samples += batch.y.size(0)
