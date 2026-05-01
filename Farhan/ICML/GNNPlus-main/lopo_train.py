@@ -38,9 +38,11 @@ ADV_LAMBDA       = 1.0
 ORTHO_WEIGHT     = 1.0     # Now dynamically modulated by certainty
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
-USE_GAT          = True    # Graph Attention (v2)
-USE_SUPCON       = True    # Supervised Contrastive Loss
-USE_SCHEDULER    = True    # Cosine Annealing LR
+USE_GAT          = True    
+USE_SUPCON       = True    
+USE_SCHEDULER    = True    
+USE_TEMPORAL     = True    # 1D-CNN over timesteps
+USE_MIXUP        = True    # Blend samples for generalization
 # --------------------------------------------------
 # Weight for Disentanglement loss
 # ─────────────────────────────────────────────────────────────────────────────
@@ -138,23 +140,47 @@ def get_adversarial_lambda(epoch, max_epochs):
     return 2. / (1. + np.exp(-10. * p)) - 1.
 
 
+class TemporalEncoder(torch.nn.Module):
+    def __init__(self, in_channels=4, out_dim=128):
+        super(TemporalEncoder, self).__init__()
+        self.conv1 = nn.Conv1d(in_channels, 32, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(64, out_dim)
+
+    def forward(self, x):
+        # x: [Batch*Nodes, 120] -> Reshape to [Batch*Nodes, 4, 30]
+        # (RSSI, Phase, dRSSI, dPhase)
+        x = x.view(-1, 4, 30)
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.pool(x).squeeze(-1)
+        return self.fc(x)
+
 # ── GCN Model ─────────────────────────────────────────────────────────────────
 class GestureGCN(nn.Module):
     def __init__(self, dim_in, dim_hidden, num_classes):
         super(GestureGCN, self).__init__()
-        # Shared Pre-processing
-        self.pre_mp = nn.Sequential(
-            nn.Linear(dim_in, dim_hidden),
-            nn.ReLU(),
-            nn.Dropout(DROPOUT)
-        )
         
-        # GNN Layers (Toggleable GAT vs GCN)
+        # Temporal Encoder (Optional)
+        if USE_TEMPORAL:
+            self.temporal_enc = TemporalEncoder(in_channels=4, out_dim=dim_hidden)
+            gnn_input_dim = dim_hidden
+        else:
+            self.temporal_enc = nn.Identity()
+            self.pre_mp = nn.Sequential(
+                nn.Linear(dim_in, dim_hidden),
+                nn.ReLU(),
+                nn.Dropout(DROPOUT)
+            )
+            gnn_input_dim = dim_hidden
+        
+        # GNN Layers
         if USE_GAT:
-            self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+            self.conv1 = GATv2Conv(gnn_input_dim, dim_hidden, heads=4, concat=False)
             self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
         else:
-            self.conv1 = GCNConv(dim_hidden, dim_hidden)
+            self.conv1 = GCNConv(gnn_input_dim, dim_hidden)
             self.conv2 = GCNConv(dim_hidden, dim_hidden)
         
         # Public Branch (Gesture Essence)
@@ -176,7 +202,11 @@ class GestureGCN(nn.Module):
         )
 
     def forward(self, x, edge_index, batch, grl_lambda=1.0):
-        x = self.pre_mp(x)
+        if USE_TEMPORAL:
+            x = self.temporal_enc(x)
+        else:
+            x = self.pre_mp(x)
+            
         x = F.relu(self.conv1(x, edge_index))
         x = F.relu(self.conv2(x, edge_index))
         x = global_mean_pool(x, batch)
@@ -300,23 +330,40 @@ def train_one_combination(train_data, val_data, test_data,
             batch = batch.to(DEVICE)
             optimizer.zero_grad()
             
-            out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
+            # --- Mixup Logic ---
+            if USE_MIXUP and model.training:
+                mix_lam = np.random.beta(1.0, 1.0)
+                index = torch.randperm(batch.x.size(0)).to(DEVICE)
+                
+                # We mix features (x) and labels (y, p_y)
+                # Note: Mixup on graphs usually happens at the node/embedding level
+                mixed_x = mix_lam * batch.x + (1 - mix_lam) * batch.x[index]
+                
+                out_g, out_p, z_pub, z_pri = model(mixed_x, batch.edge_index, batch.batch, current_lam)
+                
+                # Mixed Gesture Loss
+                loss_gesture = mix_lam * criterion_gesture(out_g, batch.y.squeeze(-1)) + \
+                               (1 - mix_lam) * criterion_gesture(out_g, batch.y[index].squeeze(-1))
+                
+                # Mixed Identity Loss
+                loss_adv_per_sample = mix_lam * torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none') + \
+                                      (1 - mix_lam) * torch.nn.functional.cross_entropy(out_p, batch.p_y[index].squeeze(-1), reduction='none')
+            else:
+                out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
+                loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
+                loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
             
-            # Monitoring Training Accuracy
+            # Monitoring Training Accuracy (on original labels if not mixed, or dominant label if mixed)
             pred_g = out_g.argmax(dim=1)
             total_train_correct += (pred_g == batch.y.squeeze(-1)).sum().item()
             total_train_samples += batch.y.size(0)
-            
-            # 1. Main Gesture Loss
-            loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
             
             # 2. SupCon Loss (Optional Improvement)
             if USE_SUPCON:
                 loss_supcon = supcon_criterion(z_pub, batch.y.squeeze(-1))
                 loss_gesture = 0.5 * loss_gesture + 0.5 * loss_supcon
 
-            # 3. Adversarial Loss (DANN) - Per sample for dynamic weighting
-            loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
+            # 3. Adversarial Loss (DANN)
             loss_adv = loss_adv_per_sample.mean()
 
             # 4. Discriminator Entropy (Monitoring "Confusion")
@@ -344,7 +391,7 @@ def train_one_combination(train_data, val_data, test_data,
         
         # Log progress
         if (epoch + 1) % 10 == 0:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f} Ort:{loss_ortho.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
         else:
             print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
 
@@ -359,7 +406,7 @@ def train_one_combination(train_data, val_data, test_data,
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print(f'\n{"="*50}')
-    print(f' VERSION: IMPROVED (GAT:{USE_GAT}, SupCon:{USE_SUPCON}, Sch:{USE_SCHEDULER})')
+    print(f' VERSION: IMPROVED (GAT:{USE_GAT}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
     print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
