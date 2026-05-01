@@ -32,17 +32,19 @@ NUM_EPOCHS       = 150
 BATCH_SIZE       = 64
 LR               = 0.001   
 DIM_IN           = 120     
-DIM_HIDDEN       = 128     
-DROPOUT          = 0.2
+DIM_HIDDEN       = 256     # Doubled for more "intellectual horsepower"
+DROPOUT          = 0.3     # Slightly increased for the larger model
 ADV_LAMBDA       = 1.0     
-ORTHO_WEIGHT     = 1.0     # Now dynamically modulated by certainty
+ORTHO_WEIGHT     = 1.0     
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
-USE_GAT          = True    
+USE_GAT          = False   # Replaced by Transformer below
+USE_TRANSFORMER  = True    # Global attention over all sensors
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
-USE_TEMPORAL     = True    # 1D-CNN over timesteps
-USE_MIXUP        = True    # Blend samples for generalization
+USE_TEMPORAL     = True    
+USE_MIXUP        = True    
+MIXUP_ALPHA      = 0.4     # Less aggressive mixing for stability
 # --------------------------------------------------
 # Weight for Disentanglement loss
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +57,12 @@ RESULTS_FILE     = 'lopo_results.txt'
 DEVICE           = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+# ── Logging Setup ────────────────────────────────────────────────────────────
+def log_print(message, results_file=RESULTS_FILE):
+    print(message)
+    with open(results_file, 'a') as f:
+        f.write(message + '\n')
 
 # ── Gradient Reversal Layer ───────────────────────────────────────────────────
 class _GradRevFn(torch.autograd.Function):
@@ -157,68 +165,59 @@ class TemporalEncoder(torch.nn.Module):
         x = self.pool(x).squeeze(-1)
         return self.fc(x)
 
-# ── GCN Model ─────────────────────────────────────────────────────────────────
-class GestureGCN(nn.Module):
+# ── Model Architecture ──────────────────────────────────────────────────────────
+class GestureModel(nn.Module):
     def __init__(self, dim_in, dim_hidden, num_classes):
-        super(GestureGCN, self).__init__()
+        super(GestureModel, self).__init__()
         
-        # Temporal Encoder (Optional)
-        if USE_TEMPORAL:
-            self.temporal_enc = TemporalEncoder(in_channels=4, out_dim=dim_hidden)
-            gnn_input_dim = dim_hidden
-        else:
-            self.temporal_enc = nn.Identity()
-            self.pre_mp = nn.Sequential(
-                nn.Linear(dim_in, dim_hidden),
-                nn.ReLU(),
-                nn.Dropout(DROPOUT)
+        # 1. Temporal Encoder
+        self.temporal_enc = TemporalEncoder(in_channels=4, out_dim=dim_hidden)
+        
+        # 2. Global Interaction Layer (Transformer vs GNN)
+        if USE_TRANSFORMER:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=dim_hidden, nhead=8, dim_feedforward=dim_hidden*2, 
+                dropout=DROPOUT, batch_first=True
             )
-            gnn_input_dim = dim_hidden
-        
-        # GNN Layers
-        if USE_GAT:
-            self.conv1 = GATv2Conv(gnn_input_dim, dim_hidden, heads=4, concat=False)
-            self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+            self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
         else:
-            self.conv1 = GCNConv(gnn_input_dim, dim_hidden)
-            self.conv2 = GCNConv(dim_hidden, dim_hidden)
+            self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+            self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
         
-        # Public Branch (Gesture Essence)
-        self.public_head = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            nn.ReLU()
-        )
+        # 3. Disentanglement Heads
+        self.public_head = nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU())
         self.classifier = nn.Linear(dim_hidden, num_classes)
         
-        # Private Branch (Person Specifics)
-        self.private_head = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            nn.ReLU()
-        )
+        self.private_head = nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU())
         self.discriminator = nn.Sequential(
-            nn.Linear(dim_hidden, dim_hidden),
-            nn.ReLU(),
+            nn.Linear(dim_hidden, dim_hidden), nn.ReLU(),
             nn.Linear(dim_hidden, NUM_PARTICIPANTS)
         )
 
     def forward(self, x, edge_index, batch, grl_lambda=1.0):
-        if USE_TEMPORAL:
-            x = self.temporal_enc(x)
+        # x: [B*8, 120] -> [B*8, 256]
+        x = self.temporal_enc(x)
+        
+        num_graphs = batch.max().item() + 1
+        # Reshape to [B, 8, 256] for Transformer
+        x = x.view(num_graphs, 8, -1)
+        
+        if USE_TRANSFORMER:
+            x = self.transformer(x)
+            # Global Average Pool over the 8 sensors
+            x = x.mean(dim=1)
         else:
-            x = self.pre_mp(x)
-            
-        x = F.relu(self.conv1(x, edge_index))
-        x = F.relu(self.conv2(x, edge_index))
-        x = global_mean_pool(x, batch)
+            # Fallback to GNN (requires flattening back)
+            x = x.view(-1, x.size(-1))
+            x = F.relu(self.conv1(x, edge_index))
+            x = F.relu(self.conv2(x, edge_index))
+            x = global_mean_pool(x, batch)
 
-        # Disentangle
+        # Heads
         z_pub = self.public_head(x)
         z_pri = self.private_head(x)
 
-        # Gesture Prediction (Public)
         out_gesture = self.classifier(z_pub)
-
-        # Identity Prediction (Private + GRL)
         z_pri_grl = GradientReversalLayer.apply(z_pri, grl_lambda)
         out_identity = self.discriminator(z_pri_grl)
 
@@ -291,7 +290,7 @@ def evaluate(model, loader):
 def train_one_combination(train_data, val_data, test_data,
                           test_pid, val_pid, run_idx, total_runs):
     print(f"    Initializing model and loaders for run {run_idx}/{total_runs}...")
-    model = GestureGCN(DIM_IN, DIM_HIDDEN, NUM_GESTURES).to(DEVICE)
+    model = GestureModel(DIM_IN, DIM_HIDDEN, NUM_GESTURES).to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     
@@ -332,7 +331,7 @@ def train_one_combination(train_data, val_data, test_data,
             
             # --- Mixup Logic (Graph-Level Shuffling) ---
             if USE_MIXUP and model.training:
-                mix_lam = np.random.beta(1.0, 1.0)
+                mix_lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
                 batch_size = batch.num_graphs
                 graph_index = torch.randperm(batch_size).to(DEVICE)
                 
@@ -397,9 +396,9 @@ def train_one_combination(train_data, val_data, test_data,
         
         # Log progress
         if (epoch + 1) % 10 == 0:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f} Ort:{loss_ortho.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+            log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f} Ort:{loss_ortho.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
         else:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+            log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
 
         # Save best model based on validation accuracy
         if val_acc > best_val_acc:
@@ -411,34 +410,39 @@ def train_one_combination(train_data, val_data, test_data,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print(f'\n{"="*50}')
-    print(f' VERSION: IMPROVED (GAT:{USE_GAT}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
-    print(f' RUNNING ON: {DEVICE}')
-    if DEVICE.type == 'cuda':
-        print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
-    print(f'{"="*50}\n')
+    # Clear or initialize the results file
+    with open(RESULTS_FILE, 'w') as f:
+        f.write("=== TRAINING SESSION START ===\n")
 
-    print('Loading dataset...')
+    log_print(f'\n{"="*50}')
+    log_print(f' VERSION: IMPROVED (Attn:{"Trans" if USE_TRANSFORMER else "GAT"}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' RUNNING ON: {DEVICE}')
+    if DEVICE.type == 'cuda':
+        log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
+    log_print(f'{"="*50}\n')
+
+    log_print('Loading dataset...')
     dataset = load_full_dataset()
-    print(f'Total samples: {len(dataset)}')
+    log_print(f'Total samples: {len(dataset)}')
 
     pids = sorted(set(d.p_y.item() for d in dataset))
-    print(f'Participants found: {pids}')
+    log_print(f'Participants found: {pids}')
     
     combinations = [(15, 1), (12, 15)]
     
     total_runs = len(combinations)
-    print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
+    log_print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
 
     all_acc, all_f1 = [], []
 
     for run_idx, (test_pid, val_pid) in enumerate(combinations, 1):
+        log_print(f"\n    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
         train_data, val_data, test_data = split_three_way(
             dataset, test_pid, val_pid
         )
 
         if len(test_data) == 0 or len(val_data) == 0:
-            print(f'  Skipping: empty split for test=p{test_pid+1} val=p{val_pid+1}')
+            log_print(f'  Skipping: empty split for test=p{test_pid+1} val=p{val_pid+1}')
             continue
 
         acc, f1, class_errors = train_one_combination(
@@ -446,10 +450,10 @@ def main():
             test_pid, val_pid, run_idx, total_runs
         )
         
-        print(f"  [DONE] Acc: {acc:.4f} | F1: {f1:.4f}")
+        log_print(f"  [DONE] Acc: {acc:.4f} | F1: {f1:.4f}")
         # Print Top 3 Failing Gestures
         sorted_errors = sorted(class_errors.items(), key=lambda x: x[1], reverse=True)
-        print(f"  Top Errors: " + ", ".join([f"G{k+1}({v})" for k, v in sorted_errors[:3]]))
+        log_print(f"  Top Errors: " + ", ".join([f"G{k+1}({v})" for k, v in sorted_errors[:3]]))
         
         all_acc.append(acc)
         all_f1.append(f1)
@@ -458,38 +462,25 @@ def main():
     mean_acc = np.mean(all_acc)
     std_acc  = np.std(all_acc)
     mean_f1  = np.mean(all_f1)
-    mean_auc = np.mean(all_auc)
 
-    print(f'\n{"="*60}')
-    print(f'LOPO RESULTS  ({total_runs} combinations, 16 test x 15 val)')
-    print(f'{"="*60}')
-    print(f'  Mean Test Accuracy : {mean_acc:.4f} ± {std_acc:.4f}')
-    print(f'  Mean F1            : {mean_f1:.4f}')
-    print(f'  Mean AUC           : {mean_auc:.4f}')
-    print(f'{"="*60}')
+    header = (
+        f"\n{'='*60}\n"
+        f"LOPO RESULTS ({len(all_acc)} combinations)\n"
+        f"VERSION: Attn:{'Trans' if USE_TRANSFORMER else 'GAT'}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP}\n"
+        f"{'='*60}\n"
+    )
+    body = (
+        f"  Mean Test Accuracy : {mean_acc:.4f} ± {std_acc:.4f}\n"
+        f"  Mean F1            : {mean_f1:.4f}\n"
+        f"{'='*60}\n"
+    )
+    log_print(header + body)
 
-    # Per-test-participant average
-    print(f'\nPer-participant average (averaged over all 15 val choices):')
-    for test_pid in range(NUM_PARTICIPANTS):
-        indices = [i for i, (t, v) in enumerate(combinations) if t == test_pid]
-        if indices:
-            p_acc = np.mean([all_acc[i] for i in indices])
-            print(f'  p{test_pid+1:02d}: {p_acc:.4f}')
-
-    with open(RESULTS_FILE, 'w') as f:
-        f.write('LOPO Cross-Validation Results (test+val split)\n')
-        f.write(f'Adversarial lambda: DYNAMIC (Logistic Warmup)\n')
-        f.write(f'Epochs per run: {NUM_EPOCHS}\n')
-        f.write(f'Total combinations: {total_runs}\n\n')
-        for (test_pid, val_pid), acc, f1, auc in zip(
-                combinations, all_acc, all_f1, all_auc):
-            f.write(f'test=p{test_pid+1:02d} val=p{val_pid+1:02d}: '
-                    f'acc={acc:.4f} f1={f1:.4f} auc={auc:.4f}\n')
-        f.write(f'\nMean Accuracy : {mean_acc:.4f} +/- {std_acc:.4f}\n')
-        f.write(f'Mean F1       : {mean_f1:.4f}\n')
-        f.write(f'Mean AUC      : {mean_auc:.4f}\n')
-
-    print(f'\nResults saved to {RESULTS_FILE}')
+    with open(RESULTS_FILE, 'a') as f:
+        for (test_pid, val_pid), acc, f1 in zip(combinations, all_acc, all_f1):
+            f.write(f"test=p{test_pid+1:02d} val=p{val_pid+1:02d} | acc={acc:.4f} f1={f1:.4f}\n")
+    
+    log_print(f"Detailed results saved to {RESULTS_FILE}")
 
 
 if __name__ == '__main__':
