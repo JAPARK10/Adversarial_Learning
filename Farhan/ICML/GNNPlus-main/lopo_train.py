@@ -27,19 +27,21 @@ from torch_geometric.nn import BatchNorm
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from itertools import permutations
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
-import os
+# ── HYPERPARAMETERS (Tuning Area) ──────────────────────────────────────────
+NUM_EPOCHS       = 150
+BATCH_SIZE       = 64
+LR               = 0.001   # Try 0.01 or 0.005
+DIM_IN           = 60
+DIM_HIDDEN       = 128     # Reduced for better generalization
+DROPOUT          = 0.2
+ADV_LAMBDA       = 1.0     # Increased identity scrubbing
+ORTHO_WEIGHT     = 0.001   # Weight for Disentanglement loss
+# ─────────────────────────────────────────────────────────────────────────────
+
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
 DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'geometric_data_processed.pt')
 NUM_PARTICIPANTS = 16
 NUM_GESTURES     = 22
-NUM_EPOCHS       = 150
-BATCH_SIZE       = 64
-LR               = 0.001
-ADV_LAMBDA       = 0.5
-DIM_IN           = 60
-DIM_HIDDEN       = 256
-DROPOUT          = 0.2
 RESULTS_FILE     = 'lopo_results.txt'
 DEVICE           = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,8 +273,8 @@ def train_one_combination(train_data, val_data, test_data,
             corr_matrix = torch.matmul(z_pub_cent.t(), z_priv_cent)
             ortho_loss = torch.norm(corr_matrix, p='fro') # Frobenius norm of the cross-correlation
 
-            # Total Loss (Reduced Ortho weight to 0.001)
-            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (0.001 * ortho_loss)
+            # Total Loss
+            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (ORTHO_WEIGHT * ortho_loss)
             
             loss.backward()
             optimizer.step()
@@ -316,13 +318,17 @@ def main():
     pids = sorted(set(d.p_y.item() for d in dataset))
     print(f'Participants found: {pids}')
 
-    # All (test, val) combinations where test != val
-    # combinations = [(t, v) for t in range(NUM_PARTICIPANTS)
-    #                         for v in range(NUM_PARTICIPANTS) if t != v]
-    # combinations = [(15, 14)]
-    combinations = [(i, (i + 1) % NUM_PARTICIPANTS) for i in range(NUM_PARTICIPANTS)]
+    # --- FULL LOPO (240 runs) ---
+    # combinations = [(t, v) for t in range(NUM_PARTICIPANTS) for v in range(NUM_PARTICIPANTS) if t != v]
+    
+    # --- PARTIAL LOPO (16 runs) ---
+    # combinations = [(i, (i + 1) % NUM_PARTICIPANTS) for i in range(NUM_PARTICIPANTS)]
+    
+    # Ultra-Fast Iteration: 2 specific hardcoded pairs
+    combinations = [(15, 1), (12, 15)]
+    
     total_runs = len(combinations)
-    print(f'Total combinations: {total_runs} (16 pairs)')
+    print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
 
     all_acc, all_f1, all_auc = [], [], []
 
