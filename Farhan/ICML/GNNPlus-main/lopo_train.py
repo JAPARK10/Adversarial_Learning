@@ -163,8 +163,12 @@ def load_full_dataset():
         x_std = d.x.std() + 1e-7
         d.x = (d.x - x_mean) / x_std
 
-        s, e = slices['edge_index'][i].item(), slices['edge_index'][i+1].item()
-        d.edge_index = data_store.edge_index[:, s:e]
+        # [Graph Structure] Create a Fully Connected graph for 8 tags
+        # This allows the GNN to learn any cross-tag spatial relationship
+        num_nodes = 8
+        adj = torch.ones((num_nodes, num_nodes))
+        d.edge_index = adj.nonzero().t().contiguous()
+
         s, e = slices['y'][i].item(), slices['y'][i+1].item()
         d.y = data_store.y[s:e]
         s, e = slices['p_y'][i].item(), slices['p_y'][i+1].item()
