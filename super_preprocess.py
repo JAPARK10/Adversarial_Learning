@@ -32,7 +32,7 @@ class SuperGeometricDataset(InMemoryDataset):
                     all_files.append(os.path.join(root, f))
         
         all_files.sort()
-        print(f"Found {len(all_files)} raw .npy samples. Generating Super-Dataset (3x Augmentation)...")
+        print(f"Found {len(all_files)} raw .npy samples. Generating Super-Dataset (10x Augmentation + Phase Unwrapping)...")
         
         num_nodes = 8
         adj = torch.ones((num_nodes, num_nodes))
@@ -48,7 +48,6 @@ class SuperGeometricDataset(InMemoryDataset):
             if not p_match or not g_match:
                 continue
                 
-            # Convert p01 -> 0, p16 -> 15
             p_id = int(p_match.group(1)) - 1
             g_id = int(g_match.group(1)) - 1 
             
@@ -59,21 +58,42 @@ class SuperGeometricDataset(InMemoryDataset):
                 
                 raw_tensor = torch.from_numpy(raw_np).float()
                 rssi = raw_tensor[:, :, 0].permute(1, 0)   # (8, 30)
-                phase = raw_tensor[:, :, 1].permute(1, 0)  # (8, 30)
+                
+                # --- PHASE UNWRAPPING (The Fix) ---
+                phase_raw = raw_tensor[:, :, 1].permute(1, 0).numpy()
+                phase_unwrapped = np.unwrap(phase_raw, axis=1) 
+                phase = torch.from_numpy(phase_unwrapped).float()
+                
                 reshaped_x = torch.cat([rssi, phase], dim=1) # (8, 60)
 
-                # --- 1. Original Sample ---
+                # --- 10x AUGMENTATION ---
+                # 1. Original
                 data_list.append(self.create_data_object(reshaped_x, fc_edge_index, g_id, p_id))
 
-                # --- 2. Augmented: Gaussian Noise (5%) ---
-                noise = torch.randn_like(reshaped_x) * 0.05
-                data_list.append(self.create_data_object(reshaped_x + noise, fc_edge_index, g_id, p_id))
+                # 2-4. Multi-Scale Noise
+                for sigma in [0.01, 0.05, 0.1]:
+                    noise = torch.randn_like(reshaped_x) * sigma
+                    data_list.append(self.create_data_object(reshaped_x + noise, fc_edge_index, g_id, p_id))
 
-                # --- 3. Augmented: Random Scaling (0.9 to 1.1) ---
-                scale = 0.9 + (torch.rand(1) * 0.2)
-                data_list.append(self.create_data_object(reshaped_x * scale, fc_edge_index, g_id, p_id))
+                # 5-6. Scaling
+                for scale in [0.9, 1.1]:
+                    data_list.append(self.create_data_object(reshaped_x * scale, fc_edge_index, g_id, p_id))
 
-            except Exception as e:
+                # 7-8. Time-Shifting
+                for shift in [1, -1]:
+                    rssi_s = torch.roll(rssi, shifts=shift, dims=1)
+                    phase_s = torch.roll(phase, shifts=shift, dims=1)
+                    data_list.append(self.create_data_object(torch.cat([rssi_s, phase_s], dim=1), fc_edge_index, g_id, p_id))
+
+                # 9. Mirroring (Swap Arms)
+                mirror_idx = [4, 5, 6, 7, 0, 1, 2, 3]
+                data_list.append(self.create_data_object(reshaped_x[mirror_idx], fc_edge_index, g_id, p_id))
+
+                # 10. Heavy Hybrid
+                hybrid = (reshaped_x + torch.randn_like(reshaped_x)*0.03) * 1.05
+                data_list.append(self.create_data_object(hybrid, fc_edge_index, g_id, p_id))
+
+            except Exception:
                 pass
 
         print(f"Collatting {len(data_list)} samples...")
@@ -81,10 +101,10 @@ class SuperGeometricDataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[0])
 
     def create_data_object(self, x, edge_index, g_id, p_id):
-        # x is [8, 60] -> 30 RSSI, 30 Phase
         rssi = x[:, :30]
         phase = x[:, 30:]
         
+        # Now deltas are smooth thanks to np.unwrap
         rssi_delta = torch.cat([torch.zeros((8, 1)), rssi[:, 1:] - rssi[:, :-1]], dim=1)
         phase_delta = torch.cat([torch.zeros((8, 1)), phase[:, 1:] - phase[:, :-1]], dim=1)
         
@@ -101,11 +121,9 @@ class SuperGeometricDataset(InMemoryDataset):
 
 def main():
     root_dir = r"c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\Farhan\ICML\GNNPlus-main\RFIDDataSet"
-    
     if not os.path.exists(root_dir):
         print(f"Error: {root_dir} not found.")
         return
-
     dataset = SuperGeometricDataset(root=root_dir)
     print(f"\nDONE! Super-Dataset created at: {dataset.processed_paths[0]}")
     print(f"Total samples: {len(dataset)}")
