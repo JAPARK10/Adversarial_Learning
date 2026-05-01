@@ -28,6 +28,8 @@ from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from itertools import permutations
 
 # ── HYPERPARAMETERS (Tuning Area) ──────────────────────────────────────────
+NUM_EPOCHS       = 150
+BATCH_SIZE       = 64
 LR               = 0.001   
 DIM_IN           = 120     
 DIM_HIDDEN       = 128     
