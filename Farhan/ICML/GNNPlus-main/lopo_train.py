@@ -31,7 +31,7 @@ from itertools import permutations
 NUM_EPOCHS       = 150
 BATCH_SIZE       = 64
 LR               = 0.001   # Try 0.01 or 0.005
-DIM_IN           = 60
+DIM_IN           = 120     # Raw (60) + Delta (60)
 DIM_HIDDEN       = 128     # Reduced for better generalization
 DROPOUT          = 0.2
 ADV_LAMBDA       = 1.0     # Increased identity scrubbing
@@ -39,7 +39,7 @@ ORTHO_WEIGHT     = 0.001   # Weight for Disentanglement loss
 # ─────────────────────────────────────────────────────────────────────────────
 
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
-DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'geometric_data_processed.pt')
+DATASET_PT       = os.path.join(BASE_DIR, 'RFIDDataSet', 'processed', 'super_geometric_data.pt')
 NUM_PARTICIPANTS = 16
 NUM_GESTURES     = 22
 RESULTS_FILE     = 'lopo_results.txt'
@@ -155,19 +155,10 @@ def load_full_dataset():
     for i in range(num_samples):
         d = Data()
         s, e = slices['x'][i].item(), slices['x'][i+1].item()
-        d.x = data_store.x[s:e].clone() # Clone to avoid modifying the original data_store
+        d.x = data_store.x[s:e].clone() 
 
-        # [Normalization] Standardize features to zero mean and unit variance per sample
-        # This removes the absolute magnitude shortcut for identity detection
-        x_mean = d.x.mean()
-        x_std = d.x.std() + 1e-7
-        d.x = (d.x - x_mean) / x_std
-
-        # [Graph Structure] Create a Fully Connected graph for 8 tags
-        # This allows the GNN to learn any cross-tag spatial relationship
-        num_nodes = 8
-        adj = torch.ones((num_nodes, num_nodes))
-        d.edge_index = adj.nonzero().t().contiguous()
+        s, e = slices['edge_index'][i].item(), slices['edge_index'][i+1].item()
+        d.edge_index = data_store.edge_index[:, s:e]
 
         s, e = slices['y'][i].item(), slices['y'][i+1].item()
         d.y = data_store.y[s:e]

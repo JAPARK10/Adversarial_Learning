@@ -1,0 +1,104 @@
+import os
+import re
+import torch
+import numpy as np
+from torch_geometric.data import Data, InMemoryDataset
+from tqdm import tqdm
+
+class SuperGeometricDataset(InMemoryDataset):
+    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
+
+    @property
+    def processed_file_names(self):
+        return ['super_geometric_data.pt']
+
+    def process(self):
+        data_list = []
+        raw_dir = os.path.join(self.root, 'raw')
+        
+        p_regex = re.compile(r'pP(\d+)')
+        g_regex = re.compile(r'_G(\d+)')
+        
+        all_files = sorted([f for f in os.listdir(raw_dir) if f.endswith('.pt')])
+        print(f"Found {len(all_files)} raw samples. Generating Super-Dataset (3x Augmentation)...")
+        
+        # Fully Connected Edge Index for 8 tags (8x8 = 64 edges)
+        num_nodes = 8
+        adj = torch.ones((num_nodes, num_nodes))
+        fc_edge_index = adj.nonzero().t().contiguous()
+
+        for filename in tqdm(all_files):
+            p_match = p_regex.search(filename)
+            g_match = g_regex.search(filename)
+            if not p_match or not g_match:
+                continue
+                
+            p_id = int(p_match.group(1)) - 1
+            g_id = int(g_match.group(1)) - 1
+            
+            path = os.path.join(raw_dir, filename)
+            try:
+                raw_tensor = torch.load(path, weights_only=False)
+                if isinstance(raw_tensor, np.ndarray):
+                    raw_tensor = torch.from_numpy(raw_tensor).float()
+                else:
+                    raw_tensor = raw_tensor.float()
+
+                # --- 1. Original Sample ---
+                data_list.append(self.create_data_object(raw_tensor, fc_edge_index, g_id, p_id))
+
+                # --- 2. Augmented: Gaussian Noise (5%) ---
+                noise = torch.randn_like(raw_tensor) * 0.05
+                data_list.append(self.create_data_object(raw_tensor + noise, fc_edge_index, g_id, p_id))
+
+                # --- 3. Augmented: Random Scaling (0.9 to 1.1) ---
+                scale = 0.9 + (torch.rand(1) * 0.2)
+                data_list.append(self.create_data_object(raw_tensor * scale, fc_edge_index, g_id, p_id))
+
+            except Exception as e:
+                print(f"Error processing {filename}: {e}")
+
+        print(f"Collatting {len(data_list)} samples...")
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])
+
+    def create_data_object(self, x, edge_index, g_id, p_id):
+        """Calculates velocity features and packages into PyG Data object."""
+        # x is [8, 60] -> 30 RSSI, 30 Phase
+        rssi = x[:, :30]
+        phase = x[:, 30:]
+        
+        # Calculate Delta (Velocity) - padding the first column with 0
+        rssi_delta = torch.cat([torch.zeros((8, 1)), rssi[:, 1:] - rssi[:, :-1]], dim=1)
+        phase_delta = torch.cat([torch.zeros((8, 1)), phase[:, 1:] - phase[:, :-1]], dim=1)
+        
+        # Combine: Raw (60) + Delta (60) = 120 features per node
+        combined_features = torch.cat([rssi, phase, rssi_delta, phase_delta], dim=1)
+        
+        # Normalization (Per-Sample)
+        mean = combined_features.mean()
+        std = combined_features.std() + 1e-7
+        combined_features = (combined_features - mean) / std
+        
+        return Data(x=combined_features, 
+                    edge_index=edge_index, 
+                    y=torch.tensor([g_id], dtype=torch.long),
+                    p_y=torch.tensor([p_id], dtype=torch.long))
+
+def main():
+    # Update this to your local path
+    root_dir = "Jeremias/codebase/AdversarialLearningProject/SavedTensor"
+    
+    if not os.path.exists(root_dir):
+        print(f"Error: {root_dir} not found.")
+        return
+
+    dataset = SuperGeometricDataset(root=root_dir)
+    print(f"\nDONE! Super-Dataset created at: {dataset.processed_paths[0]}")
+    print(f"Final Input Dimension: 120 features")
+    print(f"Total samples: {len(dataset)}")
+
+if __name__ == "__main__":
+    main()
