@@ -40,8 +40,10 @@ ORTHO_WEIGHT     = 1.0
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
 USE_GAT          = True    
 USE_SENSOR_ID    = True    
-USE_SENSOR_DROP  = True    # Randomly zeros out one sensor (Dynamic Hybrid)
-SENSOR_DROP_RATE = 0.2     # 20% of samples will have a missing sensor
+USE_SENSOR_DROP  = True    
+SENSOR_DROP_RATE = 0.2     
+USE_DYNAMIC_JITTER = True   # Adds infinite random noise during training
+JITTER_SIGMA     = 0.02     # Strength of the dynamic noise
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
 USE_TEMPORAL     = True    
@@ -325,6 +327,11 @@ def train_one_combination(train_data, val_data, test_data,
 
         for batch in train_loader:
             batch = batch.to(DEVICE)
+
+            # --- DYNAMIC JITTER ---
+            if USE_DYNAMIC_JITTER and model.training:
+                jitter = torch.randn_like(batch.x) * JITTER_SIGMA
+                batch.x = batch.x + jitter
             
             # --- DYNAMIC SENSOR DROP ---
             if USE_SENSOR_DROP and torch.rand(1).item() < SENSOR_DROP_RATE:
@@ -425,7 +432,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
