@@ -22,20 +22,25 @@ import torch.nn.functional as F
 import numpy as np
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
+from torch_geometric.nn import GCNConv, GATv2Conv, global_mean_pool, global_add_pool
 from torch_geometric.nn import BatchNorm
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from itertools import permutations
 
 # ── HYPERPARAMETERS (Tuning Area) ──────────────────────────────────────────
-NUM_EPOCHS       = 150
-BATCH_SIZE       = 64
-LR               = 0.001   # Try 0.01 or 0.005
-DIM_IN           = 120     # Raw (60) + Delta (60)
-DIM_HIDDEN       = 128     # Reduced for better generalization
+LR               = 0.001   
+DIM_IN           = 120     
+DIM_HIDDEN       = 128     
 DROPOUT          = 0.2
-ADV_LAMBDA       = 1.0     # Increased identity scrubbing
-ORTHO_WEIGHT     = 0.001   # Weight for Disentanglement loss
+ADV_LAMBDA       = 1.0     
+ORTHO_WEIGHT     = 0.001   
+
+# --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
+USE_GAT          = True    # Graph Attention (v2)
+USE_SUPCON       = True    # Supervised Contrastive Loss
+USE_SCHEDULER    = True    # Cosine Annealing LR
+# --------------------------------------------------
+# Weight for Disentanglement loss
 # ─────────────────────────────────────────────────────────────────────────────
 
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +72,44 @@ class GradientReversal(nn.Module):
     def forward(self, x):
         return _GradRevFn.apply(x, self.lam)
 
+class GradientReversalLayer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, lam):
+        ctx.lam = lam
+        return x.clone()
+    @staticmethod
+    def backward(ctx, grad):
+        return -ctx.lam * grad, None
+
+class SupConLoss(torch.nn.Module):
+    """Supervised Contrastive Learning Loss."""
+    def __init__(self, temperature=0.07):
+        super(SupConLoss, self).__init__()
+        self.temperature = temperature
+
+    def forward(self, features, labels):
+        # features: [B, D], labels: [B]
+        features = torch.nn.functional.normalize(features, dim=1)
+        similarity_matrix = torch.matmul(features, features.T) / self.temperature
+        
+        # Mask for positive pairs (same label)
+        labels = labels.view(-1, 1)
+        mask = torch.eq(labels, labels.T).float().to(features.device)
+        
+        # Remove self-similarity from denominator
+        logits_mask = torch.scatter(
+            torch.ones_like(mask), 1,
+            torch.arange(features.shape[0]).view(-1, 1).to(features.device), 0
+        )
+        mask = mask * logits_mask
+        
+        # Compute log_prob
+        exp_logits = torch.exp(similarity_matrix) * logits_mask
+        log_prob = similarity_matrix - torch.log(exp_logits.sum(1, keepdim=True) + 1e-6)
+        
+        # Mean log-likelihood for positive pairs
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-6)
+        return -mean_log_prob_pos.mean()
 
 class UserDiscriminator(nn.Module):
     def __init__(self, in_dim, num_participants, use_grl=True, lam=1.0):
@@ -95,55 +138,59 @@ def get_adversarial_lambda(epoch, max_epochs):
 
 # ── GCN Model ─────────────────────────────────────────────────────────────────
 class GestureGCN(nn.Module):
-    def __init__(self, dim_in=DIM_IN, dim_hidden=DIM_HIDDEN,
-                 num_classes=NUM_GESTURES, dropout=DROPOUT):
-        super().__init__()
-        self.pre_mp = nn.Linear(dim_in, dim_hidden)
-        # 3-layer GCN for more representational room
-        self.convs = nn.ModuleList([
-            GCNConv(dim_hidden, dim_hidden) for _ in range(3)
-        ])
-        self.bns = nn.ModuleList([
-            BatchNorm(dim_hidden) for _ in range(3)
-        ])
-        self.ff1 = nn.ModuleList([
-            nn.Linear(dim_hidden, dim_hidden * 2) for _ in range(3)
-        ])
-        self.ff2 = nn.ModuleList([
-            nn.Linear(dim_hidden * 2, dim_hidden) for _ in range(3)
-        ])
-        self.dropout = dropout
-        self.post_mp = nn.Sequential(
-            nn.Linear(dim_hidden // 2, dim_hidden // 2),
+    def __init__(self, dim_in, dim_hidden, num_classes):
+        super(GestureGCN, self).__init__()
+        # Shared Pre-processing
+        self.pre_mp = nn.Sequential(
+            nn.Linear(dim_in, dim_hidden),
             nn.ReLU(),
-            nn.Linear(dim_hidden // 2, num_classes),
+            nn.Dropout(DROPOUT)
+        )
+        
+        # GNN Layers (Toggleable GAT vs GCN)
+        if USE_GAT:
+            self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+            self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+        else:
+            self.conv1 = GCNConv(dim_hidden, dim_hidden)
+            self.conv2 = GCNConv(dim_hidden, dim_hidden)
+        
+        # Public Branch (Gesture Essence)
+        self.public_head = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            nn.ReLU()
+        )
+        self.classifier = nn.Linear(dim_hidden, num_classes)
+        
+        # Private Branch (Person Specifics)
+        self.private_head = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            nn.ReLU()
+        )
+        self.discriminator = nn.Sequential(
+            nn.Linear(dim_hidden, dim_hidden),
+            nn.ReLU(),
+            nn.Linear(dim_hidden, NUM_PARTICIPANTS)
         )
 
-    def forward(self, data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        x = F.relu(self.pre_mp(x))
-        for conv, bn, ff1, ff2 in zip(self.convs, self.bns,
-                                       self.ff1, self.ff2):
-            identity = x
-            x = conv(x, edge_index)
-            x = bn(x)
-            x = F.relu(x)
-            x = ff1(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = ff2(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = x + identity
-        
-        # Using Add pooling (preserves structural energy)
-        graph_embed = global_add_pool(x, batch)
-        
-        # [Split] Disentangle into Public (0:64) and Private (64:128) branches
-        z_pub = graph_embed[:, :graph_embed.shape[1] // 2]
-        z_priv = graph_embed[:, graph_embed.shape[1] // 2:]
-        
-        out = self.post_mp(z_pub)
-        return out, z_pub, z_priv
+    def forward(self, x, edge_index, batch, grl_lambda=1.0):
+        x = self.pre_mp(x)
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = global_mean_pool(x, batch)
+
+        # Disentangle
+        z_pub = self.public_head(x)
+        z_pri = self.private_head(x)
+
+        # Gesture Prediction (Public)
+        out_gesture = self.classifier(z_pub)
+
+        # Identity Prediction (Private + GRL)
+        z_pri_grl = GradientReversalLayer.apply(z_pri, grl_lambda)
+        out_identity = self.discriminator(z_pri_grl)
+
+        return out_gesture, out_identity, z_pub, z_pri
 
 
 # ── Dataset loading ───────────────────────────────────────────────────────────
@@ -188,7 +235,7 @@ def evaluate(model, loader):
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(DEVICE)
-            pred, _, _ = model(batch)
+            pred, _, _, _ = model(batch.x, batch.edge_index, batch.batch)
             true = batch.y.squeeze(-1)
             probs = torch.softmax(pred, dim=1)
             all_true.extend(true.cpu().numpy())
@@ -206,23 +253,22 @@ def evaluate(model, loader):
 
 def train_one_combination(train_data, val_data, test_data,
                           test_pid, val_pid, run_idx, total_runs):
-    model     = GestureGCN().to(DEVICE)
-    # Public Disc (with GRL) to scrub identity
-    user_disc_pub = UserDiscriminator(DIM_HIDDEN // 2, NUM_PARTICIPANTS, use_grl=True).to(DEVICE)
-    # Private Disc (no GRL) to attract identity
-    user_disc_priv = UserDiscriminator(DIM_HIDDEN // 2, NUM_PARTICIPANTS, use_grl=False).to(DEVICE)
+    model = GestureGCN(DIM_IN, DIM_HIDDEN, NUM_GESTURES).to(DEVICE)
 
-    optimizer = torch.optim.Adam(
-        list(model.parameters()) + list(user_disc_pub.parameters()) + list(user_disc_priv.parameters()),
-        lr=LR, weight_decay=5e-4
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=NUM_EPOCHS
-    )
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    
+    # Cosine Annealing (Optional Improvement)
+    scheduler = None
+    if USE_SCHEDULER:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
-    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader   = DataLoader(val_data,   batch_size=BATCH_SIZE, shuffle=False)
-    test_loader  = DataLoader(test_data,  batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+    val_loader   = DataLoader(val_data,   batch_size=64, shuffle=False)
+    test_loader  = DataLoader(test_data,  batch_size=64, shuffle=False)
+
+    criterion_gesture = nn.CrossEntropyLoss()
+    criterion_identity = nn.CrossEntropyLoss()
+    supcon_criterion = SupConLoss().to(DEVICE)
 
     best_val_acc  = 0.0
     best_test_acc = 0.0
@@ -231,54 +277,39 @@ def train_one_combination(train_data, val_data, test_data,
 
     for epoch in range(NUM_EPOCHS):
         model.train()
-        user_disc_pub.train()
-        user_disc_priv.train()
         
-        # Update dynamic lambda for this epoch
         current_lam = get_adversarial_lambda(epoch, NUM_EPOCHS)
-        user_disc_pub.grl.lam = current_lam
 
         for batch in train_loader:
             batch = batch.to(DEVICE)
             optimizer.zero_grad()
             
-            pred, z_pub, z_priv = model(batch)
-            gesture_labels = batch.y.squeeze(-1)
-            participant_labels = batch.p_y.squeeze(-1)
+            out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
+            
+            # 1. Main Gesture Loss
+            loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
+            
+            # 2. SupCon Loss (Optional Improvement)
+            if USE_SUPCON:
+                loss_supcon = supcon_criterion(z_pub, batch.y.squeeze(-1))
+                loss_gesture = 0.5 * loss_gesture + 0.5 * loss_supcon
 
-            # 1. Gesture Loss
-            gesture_loss = F.cross_entropy(pred, gesture_labels)
+            # 3. Adversarial Loss (DANN)
+            loss_adv = criterion_identity(out_p, batch.p_y.squeeze(-1))
 
-            # 2. Public Branch: Identity Scrubbing (DANN approach)
-            # The Discriminator tries to IDENTIFY (CrossEntropy).
-            # The GRL flips the gradient for the GNN to HIDE.
-            user_logits_pub = user_disc_pub(z_pub)
-            adv_loss = F.cross_entropy(user_logits_pub, participant_labels)
+            # 4. Orthogonality Loss (Disentanglement)
+            # Fix: Normalize vectors first so loss doesn't explode
+            z_pub_norm = torch.nn.functional.normalize(z_pub, p=2, dim=1)
+            z_pri_norm = torch.nn.functional.normalize(z_pri, p=2, dim=1)
+            loss_ortho = torch.norm(torch.mm(z_pub_norm.t(), z_pri_norm))
 
-            # 3. Private Branch: Identity Attraction
-            user_logits_priv = user_disc_priv(z_priv)
-            priv_loss = F.cross_entropy(user_logits_priv, participant_labels)
-
-            # 4. Orthogonality Loss (Full Cross-Correlation)
-            # We want to ensure that NO feature in z_pub correlates with ANY feature in z_priv
-            # Across the whole batch: (Z_pub.T @ Z_priv) should be zero matrix
-            # Subtract means to get covariance
-            z_pub_cent = z_pub - z_pub.mean(dim=0, keepdim=True)
-            z_priv_cent = z_priv - z_priv.mean(dim=0, keepdim=True)
-            corr_matrix = torch.matmul(z_pub_cent.t(), z_priv_cent)
-            ortho_loss = torch.norm(corr_matrix, p='fro') # Frobenius norm of the cross-correlation
-
-            # Total Loss
-            loss = gesture_loss + (current_lam * adv_loss) + priv_loss + (ORTHO_WEIGHT * ortho_loss)
+            loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
             
             loss.backward()
             optimizer.step()
-
-        scheduler.step()
-
-        # Live Progress update every 10 epochs
-        if (epoch + 1) % 10 == 0:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G: {gesture_loss.item():.4f}, Adv: {adv_loss.item():.4f}, Ortho: {ortho_loss.item():.4f}) | Lam: {current_lam:.3f}')
+        
+        if scheduler:
+            scheduler.step()
 
         # Check validation accuracy each epoch
         val_acc, _, _ = evaluate(model, val_loader)
@@ -300,7 +331,7 @@ def train_one_combination(train_data, val_data, test_data,
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print(f'\n{"="*50}')
-    print(f' VERSION: IMPROVED (Disentangled + DANN + Normalization)')
+    print(f' VERSION: IMPROVED (GAT:{USE_GAT}, SupCon:{USE_SUPCON}, Sch:{USE_SCHEDULER})')
     print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
