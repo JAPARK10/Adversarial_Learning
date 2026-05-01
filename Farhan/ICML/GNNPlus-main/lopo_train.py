@@ -42,8 +42,9 @@ USE_GAT          = True
 USE_SENSOR_ID    = True    
 USE_SENSOR_DROP  = True    
 SENSOR_DROP_RATE = 0.2     
-USE_DYNAMIC_JITTER = True   # Adds infinite random noise during training
-JITTER_SIGMA     = 0.02     # Strength of the dynamic noise
+USE_DYNAMIC_JITTER = True   
+JITTER_SIGMA     = 0.02     
+USE_FOCAL        = True      # Focuses learning on hard gestures (G15, G6, etc.)
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
 USE_TEMPORAL     = True    
@@ -152,22 +153,50 @@ def get_adversarial_lambda(epoch, max_epochs):
     return 2. / (1. + np.exp(-10. * p)) - 1.
 
 
-class TemporalEncoder(torch.nn.Module):
-    def __init__(self, in_channels=4, out_dim=128):
-        super(TemporalEncoder, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels, 32, kernel_size=5, padding=2)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Linear(64, out_dim)
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0):
+        super().__init__()
+        self.gamma = gamma
+        self.ce = nn.CrossEntropyLoss(reduction='none', label_smoothing=0.1)
 
+    def forward(self, input, target):
+        logp = self.ce(input, target)
+        p = torch.exp(-logp)
+        loss = (1 - p)**self.gamma * logp
+        return loss.mean()
+
+class TemporalEncoder(nn.Module):
+    def __init__(self, in_channels, out_dim):
+        super(TemporalEncoder, self).__init__()
+        # 1. Local Feature Extraction (CNN)
+        self.conv1 = nn.Conv1d(in_channels, 64, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(128, out_dim, kernel_size=3, padding=1)
+        
+        # 2. Global Rhythmic Reasoning (Self-Attention)
+        # We treat the 30 timesteps as a sequence
+        self.attn = nn.TransformerEncoderLayer(
+            d_model=out_dim, nhead=4, dim_feedforward=out_dim, dropout=0.1, batch_first=True
+        )
+        
     def forward(self, x):
-        # x: [Batch*Nodes, 120] -> Reshape to [Batch*Nodes, 4, 30]
-        # (RSSI, Phase, dRSSI, dPhase)
-        x = x.view(-1, 4, 30)
+        # x shape: [B*8, 120] -> reshape to [B*8, 4, 30] (4 features: Phase/RSSI for 2 antennas)
+        B_nodes = x.size(0)
+        x = x.view(B_nodes, 4, 30)
+        
+        # CNN layers
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x = self.pool(x).squeeze(-1)
-        return self.fc(x)
+        x = F.relu(self.conv3(x)) # [B*8, out_dim, 30]
+        
+        # Self-Attention over time
+        x = x.permute(0, 2, 1) # [B*8, 30, out_dim]
+        x = self.attn(x)
+        x = x.permute(0, 2, 1) # [B*8, out_dim, 30]
+        
+        # Global pooling across time
+        x = F.adaptive_avg_pool1d(x, 1).squeeze(-1) # [B*8, out_dim]
+        return x
 
 # ── Model Architecture (GAT-based) ───────────────────────────────────────────
 class GestureModel(nn.Module):
@@ -307,8 +336,12 @@ def train_one_combination(train_data, val_data, test_data,
     val_loader   = DataLoader(val_data_orig,   batch_size=BATCH_SIZE, shuffle=False)
     test_loader  = DataLoader(test_data_orig,  batch_size=BATCH_SIZE, shuffle=False)
 
-    # Use Label Smoothing to improve generalization
-    criterion_gesture = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # Use Focal Loss to master hard gestures
+    if USE_FOCAL:
+        criterion_gesture = FocalLoss(gamma=2.0)
+    else:
+        criterion_gesture = nn.CrossEntropyLoss(label_smoothing=0.1)
+    
     criterion_identity = nn.CrossEntropyLoss()
     supcon_criterion = SupConLoss().to(DEVICE)
 
@@ -432,7 +465,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, Focal:{USE_FOCAL}, SupCon:{USE_SUPCON}, Temp:Attn, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
