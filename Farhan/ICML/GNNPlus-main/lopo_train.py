@@ -35,7 +35,7 @@ DIM_IN           = 120
 DIM_HIDDEN       = 128     
 DROPOUT          = 0.2
 ADV_LAMBDA       = 1.0     
-ORTHO_WEIGHT     = 0.001   
+ORTHO_WEIGHT     = 1.0     # Now dynamically modulated by certainty
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
 USE_GAT          = True    # Graph Attention (v2)
@@ -235,23 +235,27 @@ def split_three_way(dataset, test_pid, val_pid):
 def evaluate(model, loader):
     model.eval()
     all_true, all_pred, all_prob = [], [], []
+    all_true, all_pred, all_probs = [], [], []
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(DEVICE)
             pred, _, _, _ = model(batch.x, batch.edge_index, batch.batch)
             true = batch.y.squeeze(-1)
-            probs = torch.softmax(pred, dim=1)
+            
             all_true.extend(true.cpu().numpy())
             all_pred.extend(pred.argmax(dim=1).cpu().numpy())
-            all_prob.extend(probs.cpu().numpy())
+            all_probs.extend(torch.softmax(pred, dim=1).cpu().numpy())
+
     acc = accuracy_score(all_true, all_pred)
-    f1  = f1_score(all_true, all_pred, average='weighted', zero_division=0)
-    try:
-        auc = roc_auc_score(all_true, all_prob,
-                            multi_class='ovr', average='weighted')
-    except Exception:
-        auc = 0.0
-    return acc, f1, auc
+    f1  = f1_score(all_true, all_pred, average='macro')
+    
+    # Identify failing classes
+    errors_per_class = {}
+    for t, p in zip(all_true, all_pred):
+        if t != p:
+            errors_per_class[t] = errors_per_class.get(t, 0) + 1
+            
+    return acc, f1, errors_per_class
 
 
 def train_one_combination(train_data, val_data, test_data,
@@ -266,22 +270,30 @@ def train_one_combination(train_data, val_data, test_data,
     if USE_SCHEDULER:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
-    val_loader   = DataLoader(val_data,   batch_size=64, shuffle=False)
-    test_loader  = DataLoader(test_data,  batch_size=64, shuffle=False)
+    # Filter Val/Test to only use "Original" samples (every 3rd sample in the Super-Dataset)
+    val_data_orig = val_data[::3]
+    test_data_orig = test_data[::3]
 
-    criterion_gesture = nn.CrossEntropyLoss()
+    train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader   = DataLoader(val_data_orig,   batch_size=BATCH_SIZE, shuffle=False)
+    test_loader  = DataLoader(test_data_orig,  batch_size=BATCH_SIZE, shuffle=False)
+
+    # Use Label Smoothing to improve generalization
+    criterion_gesture = nn.CrossEntropyLoss(label_smoothing=0.1)
     criterion_identity = nn.CrossEntropyLoss()
     supcon_criterion = SupConLoss().to(DEVICE)
 
     best_val_acc  = 0.0
     best_test_acc = 0.0
     best_f1       = 0.0
-    best_auc      = 0.0
+    best_errors   = {}
 
     for epoch in range(NUM_EPOCHS):
         model.train()
         print(f"    Epoch {epoch+1} starting...", end='\r')
+        
+        total_train_correct = 0
+        total_train_samples = 0
         
         current_lam = get_adversarial_lambda(epoch, NUM_EPOCHS)
 
@@ -291,6 +303,11 @@ def train_one_combination(train_data, val_data, test_data,
             
             out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
             
+            # Monitoring Training Accuracy
+            pred_g = out_g.argmax(dim=1)
+            total_train_correct += (pred_g == batch.y.squeeze(-1)).sum().item()
+            total_train_samples += batch.y.size(0)
+            
             # 1. Main Gesture Loss
             loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
             
@@ -299,14 +316,20 @@ def train_one_combination(train_data, val_data, test_data,
                 loss_supcon = supcon_criterion(z_pub, batch.y.squeeze(-1))
                 loss_gesture = 0.5 * loss_gesture + 0.5 * loss_supcon
 
-            # 3. Adversarial Loss (DANN)
-            loss_adv = criterion_identity(out_p, batch.p_y.squeeze(-1))
+            # 3. Adversarial Loss (DANN) - Per sample for dynamic weighting
+            loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
+            loss_adv = loss_adv_per_sample.mean()
 
-            # 4. Orthogonality Loss (Disentanglement)
-            # Fix: Normalize vectors first so loss doesn't explode
-            z_pub_norm = torch.nn.functional.normalize(z_pub, p=2, dim=1)
-            z_pri_norm = torch.nn.functional.normalize(z_pri, p=2, dim=1)
-            loss_ortho = torch.norm(torch.mm(z_pub_norm.t(), z_pri_norm))
+            # 4. Discriminator Entropy (Monitoring "Confusion")
+            probs_p = torch.softmax(out_p, dim=1)
+            entropy = -torch.sum(probs_p * torch.log(probs_p + 1e-6), dim=1).mean()
+
+            # 5. Dynamic Orthogonality Loss (Per-Sample)
+            z_pub_n = torch.nn.functional.normalize(z_pub, p=2, dim=1)
+            z_pri_n = torch.nn.functional.normalize(z_pri, p=2, dim=1)
+            ortho_per_sample = (z_pub_n * z_pri_n).sum(dim=1).pow(2)
+            certainty_weight = torch.exp(-loss_adv_per_sample)
+            loss_ortho = (certainty_weight * ortho_per_sample).mean()
 
             loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
             
@@ -316,27 +339,20 @@ def train_one_combination(train_data, val_data, test_data,
         if scheduler:
             scheduler.step()
 
-        # Check validation accuracy each epoch
+        # Check accuracies
+        train_acc = total_train_correct / total_train_samples
         val_acc, _, _ = evaluate(model, val_loader)
         
-        # Log progress: Loss every 10 epochs, Accuracy every epoch
+        # Log progress
         if (epoch + 1) % 10 == 0:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G: {loss_gesture.item():.4f}, Adv: {loss_adv.item():.4f}, Ortho: {loss_ortho.item():.4f}) | Val Acc: {val_acc:.4f}')
-        else:
-            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Val Acc: {val_acc:.4f}')
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
 
         # Save best model based on validation accuracy
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            # Evaluate test at best val epoch
-            best_test_acc, best_f1, best_auc = evaluate(model, test_loader)
+            best_test_acc, best_f1, best_errors = evaluate(model, test_loader)
 
-    print(f'  [{run_idx:03d}/{total_runs}] '
-          f'test=p{test_pid+1:02d} val=p{val_pid+1:02d} | '
-          f'best_val={best_val_acc:.4f} | '
-          f'test_acc={best_test_acc:.4f}')
-
-    return best_test_acc, best_f1, best_auc
+    return best_test_acc, best_f1, best_errors
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -354,20 +370,13 @@ def main():
 
     pids = sorted(set(d.p_y.item() for d in dataset))
     print(f'Participants found: {pids}')
-
-    # --- FULL LOPO (240 runs) ---
-    # combinations = [(t, v) for t in range(NUM_PARTICIPANTS) for v in range(NUM_PARTICIPANTS) if t != v]
     
-    # --- PARTIAL LOPO (16 runs) ---
-    # combinations = [(i, (i + 1) % NUM_PARTICIPANTS) for i in range(NUM_PARTICIPANTS)]
-    
-    # Ultra-Fast Iteration: 2 specific hardcoded pairs
     combinations = [(15, 1), (12, 15)]
     
     total_runs = len(combinations)
     print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
 
-    all_acc, all_f1, all_auc = [], [], []
+    all_acc, all_f1 = [], []
 
     for run_idx, (test_pid, val_pid) in enumerate(combinations, 1):
         train_data, val_data, test_data = split_three_way(
@@ -378,13 +387,18 @@ def main():
             print(f'  Skipping: empty split for test=p{test_pid+1} val=p{val_pid+1}')
             continue
 
-        acc, f1, auc = train_one_combination(
+        acc, f1, class_errors = train_one_combination(
             train_data, val_data, test_data,
             test_pid, val_pid, run_idx, total_runs
         )
+        
+        print(f"  [DONE] Acc: {acc:.4f} | F1: {f1:.4f}")
+        # Print Top 3 Failing Gestures
+        sorted_errors = sorted(class_errors.items(), key=lambda x: x[1], reverse=True)
+        print(f"  Top Errors: " + ", ".join([f"G{k+1}({v})" for k, v in sorted_errors[:3]]))
+        
         all_acc.append(acc)
         all_f1.append(f1)
-        all_auc.append(auc)
 
     # ── Final summary ────────────────────────────────────────────────────────
     mean_acc = np.mean(all_acc)
