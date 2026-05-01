@@ -16,12 +16,21 @@ class SuperGeometricDataset(InMemoryDataset):
 
     def process(self):
         data_list = []
-        raw_dir = os.path.join(self.root, 'raw')
         
         p_regex = re.compile(r'pP(\d+)')
         g_regex = re.compile(r'_G(\d+)')
         
-        all_files = sorted([f for f in os.listdir(raw_dir) if f.endswith('.pt')])
+        print(f"Scanning subdirectories in: {self.root}...")
+        
+        # Walk through all subdirectories (gesture1, gesture2, etc.)
+        all_files = []
+        for root, dirs, files in os.walk(self.root):
+            if 'processed' in root: continue # Skip the output folder
+            for f in files:
+                if f.endswith('.pt'):
+                    all_files.append(os.path.join(root, f))
+        
+        all_files.sort()
         print(f"Found {len(all_files)} raw samples. Generating Super-Dataset (3x Augmentation)...")
         
         # Fully Connected Edge Index for 8 tags (8x8 = 64 edges)
@@ -29,7 +38,8 @@ class SuperGeometricDataset(InMemoryDataset):
         adj = torch.ones((num_nodes, num_nodes))
         fc_edge_index = adj.nonzero().t().contiguous()
 
-        for filename in tqdm(all_files):
+        for path in tqdm(all_files):
+            filename = os.path.basename(path)
             p_match = p_regex.search(filename)
             g_match = g_regex.search(filename)
             if not p_match or not g_match:
@@ -38,7 +48,6 @@ class SuperGeometricDataset(InMemoryDataset):
             p_id = int(p_match.group(1)) - 1
             g_id = int(g_match.group(1)) - 1
             
-            path = os.path.join(raw_dir, filename)
             try:
                 raw_tensor = torch.load(path, weights_only=False)
                 if isinstance(raw_tensor, np.ndarray):
