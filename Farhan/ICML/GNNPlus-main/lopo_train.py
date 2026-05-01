@@ -32,13 +32,14 @@ NUM_EPOCHS       = 150
 BATCH_SIZE       = 64
 LR               = 0.001   
 DIM_IN           = 120     
-DIM_HIDDEN       = 256     # Higher capacity for better learning
+DIM_HIDDEN       = 256     
 DROPOUT          = 0.3     
 ADV_LAMBDA       = 1.0     
 ORTHO_WEIGHT     = 1.0     
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
-USE_GAT          = True    # Using GATv2 for best graph reasoning
+USE_GAT          = True    
+USE_SENSOR_ID    = True    # Learns which sensor is which on the body
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
 USE_TEMPORAL     = True    
@@ -172,6 +173,10 @@ class GestureModel(nn.Module):
         # 1. Temporal Encoder
         self.temporal_enc = TemporalEncoder(in_channels=4, out_dim=dim_hidden)
         
+        # 1.5 Sensor Identity (Knowing where the signal came from)
+        if USE_SENSOR_ID:
+            self.sensor_emb = nn.Embedding(8, dim_hidden)
+        
         # 2. GAT Layers (Reasoning about sensor relationships)
         self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
         self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
@@ -189,6 +194,13 @@ class GestureModel(nn.Module):
     def forward(self, x, edge_index, batch, grl_lambda=1.0):
         # x: [B*8, 120] -> [B*8, 256]
         x = self.temporal_enc(x)
+        
+        # Add Sensor Identity
+        if USE_SENSOR_ID:
+            # Create indices [0,1..7, 0,1..7, ...] for the batch
+            num_nodes = x.size(0)
+            sensor_indices = torch.arange(8, device=x.device).repeat(num_nodes // 8)
+            x = x + self.sensor_emb(sensor_indices)
         
         # Graph Message Passing
         x = F.relu(self.conv1(x, edge_index))
@@ -399,7 +411,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
