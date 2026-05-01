@@ -54,25 +54,29 @@ class SuperGeometricDataset(InMemoryDataset):
             g_id = int(g_match.group(1)) - 1 # Assuming folder starts at gesture1
             
             try:
-                # Load NumPy and convert to Torch
                 raw_np = np.load(path)
-                # Ensure the shape is [8, 60]
-                if raw_np.shape != (8, 60):
-                    if i < 5: print(f"Shape mismatch: {filename} is {raw_np.shape}")
+                # Handle the actual shape: (30 timesteps, 8 tags, 2 features)
+                if raw_np.shape != (30, 8, 2):
+                    if i < 5: print(f"Unexpected shape: {filename} is {raw_np.shape}")
                     continue
-                    
+                
+                # Convert to Torch and Reshape: (30, 8, 2) -> (8, 60)
+                # We want each of the 8 tags to have 60 features (30 RSSI + 30 Phase)
                 raw_tensor = torch.from_numpy(raw_np).float()
+                rssi = raw_tensor[:, :, 0].permute(1, 0)   # (8, 30)
+                phase = raw_tensor[:, :, 1].permute(1, 0)  # (8, 30)
+                reshaped_x = torch.cat([rssi, phase], dim=1) # (8, 60)
 
                 # --- 1. Original Sample ---
-                data_list.append(self.create_data_object(raw_tensor, fc_edge_index, g_id, p_id))
+                data_list.append(self.create_data_object(reshaped_x, fc_edge_index, g_id, p_id))
 
                 # --- 2. Augmented: Gaussian Noise (5%) ---
-                noise = torch.randn_like(raw_tensor) * 0.05
-                data_list.append(self.create_data_object(raw_tensor + noise, fc_edge_index, g_id, p_id))
+                noise = torch.randn_like(reshaped_x) * 0.05
+                data_list.append(self.create_data_object(reshaped_x + noise, fc_edge_index, g_id, p_id))
 
                 # --- 3. Augmented: Random Scaling (0.9 to 1.1) ---
                 scale = 0.9 + (torch.rand(1) * 0.2)
-                data_list.append(self.create_data_object(raw_tensor * scale, fc_edge_index, g_id, p_id))
+                data_list.append(self.create_data_object(reshaped_x * scale, fc_edge_index, g_id, p_id))
 
             except Exception as e:
                 if i < 5: print(f"Error processing {filename}: {e}")
