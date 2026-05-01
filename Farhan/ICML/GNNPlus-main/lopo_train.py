@@ -32,19 +32,18 @@ NUM_EPOCHS       = 150
 BATCH_SIZE       = 64
 LR               = 0.001   
 DIM_IN           = 120     
-DIM_HIDDEN       = 256     # Doubled for more "intellectual horsepower"
-DROPOUT          = 0.3     # Slightly increased for the larger model
+DIM_HIDDEN       = 256     # Higher capacity for better learning
+DROPOUT          = 0.3     
 ADV_LAMBDA       = 1.0     
 ORTHO_WEIGHT     = 1.0     
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
-USE_GAT          = False   # Replaced by Transformer below
-USE_TRANSFORMER  = True    # Global attention over all sensors
+USE_GAT          = True    # Using GATv2 for best graph reasoning
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
 USE_TEMPORAL     = True    
 USE_MIXUP        = True    
-MIXUP_ALPHA      = 0.4     # Less aggressive mixing for stability
+MIXUP_ALPHA      = 0.4     
 # --------------------------------------------------
 # Weight for Disentanglement loss
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,7 +164,7 @@ class TemporalEncoder(torch.nn.Module):
         x = self.pool(x).squeeze(-1)
         return self.fc(x)
 
-# ── Model Architecture ──────────────────────────────────────────────────────────
+# ── Model Architecture (GAT-based) ───────────────────────────────────────────
 class GestureModel(nn.Module):
     def __init__(self, dim_in, dim_hidden, num_classes):
         super(GestureModel, self).__init__()
@@ -173,16 +172,9 @@ class GestureModel(nn.Module):
         # 1. Temporal Encoder
         self.temporal_enc = TemporalEncoder(in_channels=4, out_dim=dim_hidden)
         
-        # 2. Global Interaction Layer (Transformer vs GNN)
-        if USE_TRANSFORMER:
-            encoder_layer = nn.TransformerEncoderLayer(
-                d_model=dim_hidden, nhead=8, dim_feedforward=dim_hidden*2, 
-                dropout=DROPOUT, batch_first=True
-            )
-            self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
-        else:
-            self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
-            self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+        # 2. GAT Layers (Reasoning about sensor relationships)
+        self.conv1 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
+        self.conv2 = GATv2Conv(dim_hidden, dim_hidden, heads=4, concat=False)
         
         # 3. Disentanglement Heads
         self.public_head = nn.Sequential(nn.Linear(dim_hidden, dim_hidden), nn.ReLU())
@@ -198,20 +190,12 @@ class GestureModel(nn.Module):
         # x: [B*8, 120] -> [B*8, 256]
         x = self.temporal_enc(x)
         
-        num_graphs = batch.max().item() + 1
-        # Reshape to [B, 8, 256] for Transformer
-        x = x.view(num_graphs, 8, -1)
+        # Graph Message Passing
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
         
-        if USE_TRANSFORMER:
-            x = self.transformer(x)
-            # Global Average Pool over the 8 sensors
-            x = x.mean(dim=1)
-        else:
-            # Fallback to GNN (requires flattening back)
-            x = x.view(-1, x.size(-1))
-            x = F.relu(self.conv1(x, edge_index))
-            x = F.relu(self.conv2(x, edge_index))
-            x = global_mean_pool(x, batch)
+        # Global Pooling (8 sensors -> 1 gesture vector)
+        x = global_mean_pool(x, batch)
 
         # Heads
         z_pub = self.public_head(x)
@@ -415,7 +399,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:{"Trans" if USE_TRANSFORMER else "GAT"}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')

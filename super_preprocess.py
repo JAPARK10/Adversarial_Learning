@@ -17,8 +17,8 @@ class SuperGeometricDataset(InMemoryDataset):
     def process(self):
         data_list = []
         
-        # Regex to capture participant ID (e.g., _p00) and Gesture ID (from folder name)
-        p_regex = re.compile(r'_p(\d+)')
+        # Regex to capture participant ID (e.g., p01) and Gesture ID (from folder name)
+        p_regex = re.compile(r'p(\d+)')
         g_regex = re.compile(r'gesture(\d+)')
         
         print(f"Scanning subdirectories in: {self.root}...")
@@ -28,8 +28,7 @@ class SuperGeometricDataset(InMemoryDataset):
         for root, dirs, files in os.walk(self.root):
             if 'processed' in root: continue
             for f in files:
-                # We only want the files that include the participant tag (_pXX)
-                if f.endswith('.npy') and '_p' in f:
+                if f.endswith('.npy'):
                     all_files.append(os.path.join(root, f))
         
         all_files.sort()
@@ -47,21 +46,17 @@ class SuperGeometricDataset(InMemoryDataset):
             g_match = g_regex.search(dirname)
             
             if not p_match or not g_match:
-                if i < 5: print(f"Regex fail: {filename} in {dirname}")
                 continue
                 
-            p_id = int(p_match.group(1)) # Assuming 0-indexed already
-            g_id = int(g_match.group(1)) - 1 # Assuming folder starts at gesture1
+            # Convert p01 -> 0, p16 -> 15
+            p_id = int(p_match.group(1)) - 1
+            g_id = int(g_match.group(1)) - 1 
             
             try:
                 raw_np = np.load(path)
-                # Handle the actual shape: (30 timesteps, 8 tags, 2 features)
                 if raw_np.shape != (30, 8, 2):
-                    if i < 5: print(f"Unexpected shape: {filename} is {raw_np.shape}")
                     continue
                 
-                # Convert to Torch and Reshape: (30, 8, 2) -> (8, 60)
-                # We want each of the 8 tags to have 60 features (30 RSSI + 30 Phase)
                 raw_tensor = torch.from_numpy(raw_np).float()
                 rssi = raw_tensor[:, :, 0].permute(1, 0)   # (8, 30)
                 phase = raw_tensor[:, :, 1].permute(1, 0)  # (8, 30)
@@ -79,7 +74,7 @@ class SuperGeometricDataset(InMemoryDataset):
                 data_list.append(self.create_data_object(reshaped_x * scale, fc_edge_index, g_id, p_id))
 
             except Exception as e:
-                if i < 5: print(f"Error processing {filename}: {e}")
+                pass
 
         print(f"Collatting {len(data_list)} samples...")
         data, slices = self.collate(data_list)
@@ -105,7 +100,7 @@ class SuperGeometricDataset(InMemoryDataset):
                     p_y=torch.tensor([p_id], dtype=torch.long))
 
 def main():
-    root_dir = "/root/Adversarial_Learning/Jeremias/codebase/AdversarialLearningProject/SavedTensor"
+    root_dir = r"c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\Farhan\ICML\GNNPlus-main\RFIDDataSet"
     
     if not os.path.exists(root_dir):
         print(f"Error: {root_dir} not found.")
