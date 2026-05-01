@@ -290,7 +290,6 @@ def train_one_combination(train_data, val_data, test_data,
 
     for epoch in range(NUM_EPOCHS):
         model.train()
-        print(f"    Epoch {epoch+1} starting...", end='\r')
         
         total_train_correct = 0
         total_train_samples = 0
@@ -346,6 +345,8 @@ def train_one_combination(train_data, val_data, test_data,
         # Log progress
         if (epoch + 1) % 10 == 0:
             print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+        else:
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
 
         # Save best model based on validation accuracy
         if val_acc > best_val_acc:
