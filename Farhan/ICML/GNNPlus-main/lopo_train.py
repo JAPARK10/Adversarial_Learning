@@ -39,7 +39,9 @@ ORTHO_WEIGHT     = 1.0
 
 # --- IMPROVEMENT TOGGLES (Ablation Monitoring) ---
 USE_GAT          = True    
-USE_SENSOR_ID    = True    # Learns which sensor is which on the body
+USE_SENSOR_ID    = True    
+USE_SENSOR_DROP  = True    # Randomly zeros out one sensor (Dynamic Hybrid)
+SENSOR_DROP_RATE = 0.2     # 20% of samples will have a missing sensor
 USE_SUPCON       = True    
 USE_SCHEDULER    = True    
 USE_TEMPORAL     = True    
@@ -323,6 +325,18 @@ def train_one_combination(train_data, val_data, test_data,
 
         for batch in train_loader:
             batch = batch.to(DEVICE)
+            
+            # --- DYNAMIC SENSOR DROP ---
+            if USE_SENSOR_DROP and torch.rand(1).item() < SENSOR_DROP_RATE:
+                num_graphs = batch.num_graphs
+                # Pick a random sensor index (0-7) to drop for each graph in batch
+                drop_idx = torch.randint(0, 8, (num_graphs,), device=DEVICE)
+                # Create a mask: True if we KEEP the node
+                node_idx_in_graph = torch.arange(batch.x.size(0), device=DEVICE) % 8
+                keep_mask = node_idx_in_graph != drop_idx[batch.batch]
+                batch.x = batch.x * keep_mask.unsqueeze(-1).float()
+            # ---------------------------
+
             optimizer.zero_grad()
             
             # --- Mixup Logic (Graph-Level Shuffling) ---
@@ -411,7 +425,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, SupCon:{USE_SUPCON}, Temp:{USE_TEMPORAL}, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
