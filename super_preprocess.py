@@ -39,7 +39,7 @@ class SuperGeometricDataset(InMemoryDataset):
         adj = torch.ones((num_nodes, num_nodes))
         fc_edge_index = adj.nonzero().t().contiguous()
 
-        for path in tqdm(all_files):
+        for i, path in enumerate(tqdm(all_files)):
             filename = os.path.basename(path)
             dirname = os.path.basename(os.path.dirname(path))
             
@@ -47,6 +47,7 @@ class SuperGeometricDataset(InMemoryDataset):
             g_match = g_regex.search(dirname)
             
             if not p_match or not g_match:
+                if i < 5: print(f"Regex fail: {filename} in {dirname}")
                 continue
                 
             p_id = int(p_match.group(1)) # Assuming 0-indexed already
@@ -55,6 +56,11 @@ class SuperGeometricDataset(InMemoryDataset):
             try:
                 # Load NumPy and convert to Torch
                 raw_np = np.load(path)
+                # Ensure the shape is [8, 60]
+                if raw_np.shape != (8, 60):
+                    if i < 5: print(f"Shape mismatch: {filename} is {raw_np.shape}")
+                    continue
+                    
                 raw_tensor = torch.from_numpy(raw_np).float()
 
                 # --- 1. Original Sample ---
@@ -69,7 +75,7 @@ class SuperGeometricDataset(InMemoryDataset):
                 data_list.append(self.create_data_object(raw_tensor * scale, fc_edge_index, g_id, p_id))
 
             except Exception as e:
-                pass # Skip corrupted files
+                if i < 5: print(f"Error processing {filename}: {e}")
 
         print(f"Collatting {len(data_list)} samples...")
         data, slices = self.collate(data_list)
