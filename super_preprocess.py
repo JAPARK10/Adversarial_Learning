@@ -17,43 +17,45 @@ class SuperGeometricDataset(InMemoryDataset):
     def process(self):
         data_list = []
         
-        p_regex = re.compile(r'pP(\d+)')
-        g_regex = re.compile(r'_G(\d+)')
+        # Regex to capture participant ID (e.g., _p00) and Gesture ID (from folder name)
+        p_regex = re.compile(r'_p(\d+)')
+        g_regex = re.compile(r'gesture(\d+)')
         
         print(f"Scanning subdirectories in: {self.root}...")
         
-        # Walk through all subdirectories (gesture1, gesture2, etc.)
+        # Walk through all subdirectories
         all_files = []
         for root, dirs, files in os.walk(self.root):
-            if 'processed' in root: continue # Skip the output folder
+            if 'processed' in root: continue
             for f in files:
-                if f.endswith('.pt'):
+                # We only want the files that include the participant tag (_pXX)
+                if f.endswith('.npy') and '_p' in f:
                     all_files.append(os.path.join(root, f))
         
         all_files.sort()
-        print(f"Found {len(all_files)} raw samples. Generating Super-Dataset (3x Augmentation)...")
+        print(f"Found {len(all_files)} raw .npy samples. Generating Super-Dataset (3x Augmentation)...")
         
-        # Fully Connected Edge Index for 8 tags (8x8 = 64 edges)
         num_nodes = 8
         adj = torch.ones((num_nodes, num_nodes))
         fc_edge_index = adj.nonzero().t().contiguous()
 
         for path in tqdm(all_files):
             filename = os.path.basename(path)
+            dirname = os.path.basename(os.path.dirname(path))
+            
             p_match = p_regex.search(filename)
-            g_match = g_regex.search(filename)
+            g_match = g_regex.search(dirname)
+            
             if not p_match or not g_match:
                 continue
                 
-            p_id = int(p_match.group(1)) - 1
-            g_id = int(g_match.group(1)) - 1
+            p_id = int(p_match.group(1)) # Assuming 0-indexed already
+            g_id = int(g_match.group(1)) - 1 # Assuming folder starts at gesture1
             
             try:
-                raw_tensor = torch.load(path, weights_only=False)
-                if isinstance(raw_tensor, np.ndarray):
-                    raw_tensor = torch.from_numpy(raw_tensor).float()
-                else:
-                    raw_tensor = raw_tensor.float()
+                # Load NumPy and convert to Torch
+                raw_np = np.load(path)
+                raw_tensor = torch.from_numpy(raw_np).float()
 
                 # --- 1. Original Sample ---
                 data_list.append(self.create_data_object(raw_tensor, fc_edge_index, g_id, p_id))
@@ -67,26 +69,22 @@ class SuperGeometricDataset(InMemoryDataset):
                 data_list.append(self.create_data_object(raw_tensor * scale, fc_edge_index, g_id, p_id))
 
             except Exception as e:
-                print(f"Error processing {filename}: {e}")
+                pass # Skip corrupted files
 
         print(f"Collatting {len(data_list)} samples...")
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
 
     def create_data_object(self, x, edge_index, g_id, p_id):
-        """Calculates velocity features and packages into PyG Data object."""
         # x is [8, 60] -> 30 RSSI, 30 Phase
         rssi = x[:, :30]
         phase = x[:, 30:]
         
-        # Calculate Delta (Velocity) - padding the first column with 0
         rssi_delta = torch.cat([torch.zeros((8, 1)), rssi[:, 1:] - rssi[:, :-1]], dim=1)
         phase_delta = torch.cat([torch.zeros((8, 1)), phase[:, 1:] - phase[:, :-1]], dim=1)
         
-        # Combine: Raw (60) + Delta (60) = 120 features per node
         combined_features = torch.cat([rssi, phase, rssi_delta, phase_delta], dim=1)
         
-        # Normalization (Per-Sample)
         mean = combined_features.mean()
         std = combined_features.std() + 1e-7
         combined_features = (combined_features - mean) / std
@@ -97,8 +95,7 @@ class SuperGeometricDataset(InMemoryDataset):
                     p_y=torch.tensor([p_id], dtype=torch.long))
 
 def main():
-    # Update this to your local path
-    root_dir = "Jeremias/codebase/AdversarialLearningProject/SavedTensor"
+    root_dir = "/root/Adversarial_Learning/Jeremias/codebase/AdversarialLearningProject/SavedTensor"
     
     if not os.path.exists(root_dir):
         print(f"Error: {root_dir} not found.")
@@ -106,7 +103,6 @@ def main():
 
     dataset = SuperGeometricDataset(root=root_dir)
     print(f"\nDONE! Super-Dataset created at: {dataset.processed_paths[0]}")
-    print(f"Final Input Dimension: 120 features")
     print(f"Total samples: {len(dataset)}")
 
 if __name__ == "__main__":
