@@ -445,7 +445,7 @@ def main():
     pids = sorted(set(d.p_y.item() for d in dataset))
     log_print(f'Participants found: {pids}')
     
-    combinations = [(15, 1), (12, 15)]
+    combinations = [(15, 1), (12, 15), (15,10), (13,15), (9,14), (7,8)]
     
     total_runs = len(combinations)
     log_print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
