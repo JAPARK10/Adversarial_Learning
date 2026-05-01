@@ -219,6 +219,7 @@ def load_full_dataset():
 
 def split_three_way(dataset, test_pid, val_pid):
     """Split into train / val / test by participant ID."""
+    print(f"    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
     train, val, test = [], [], []
     for d in dataset:
         pid = d.p_y.item()
@@ -255,6 +256,7 @@ def evaluate(model, loader):
 
 def train_one_combination(train_data, val_data, test_data,
                           test_pid, val_pid, run_idx, total_runs):
+    print(f"    Initializing model and loaders for run {run_idx}/{total_runs}...")
     model = GestureGCN(DIM_IN, DIM_HIDDEN, NUM_GESTURES).to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
@@ -279,6 +281,7 @@ def train_one_combination(train_data, val_data, test_data,
 
     for epoch in range(NUM_EPOCHS):
         model.train()
+        print(f"    Epoch {epoch+1} starting...", end='\r')
         
         current_lam = get_adversarial_lambda(epoch, NUM_EPOCHS)
 
@@ -315,6 +318,12 @@ def train_one_combination(train_data, val_data, test_data,
 
         # Check validation accuracy each epoch
         val_acc, _, _ = evaluate(model, val_loader)
+        
+        # Log progress: Loss every 10 epochs, Accuracy every epoch
+        if (epoch + 1) % 10 == 0:
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G: {loss_gesture.item():.4f}, Adv: {loss_adv.item():.4f}, Ortho: {loss_ortho.item():.4f}) | Val Acc: {val_acc:.4f}')
+        else:
+            print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Val Acc: {val_acc:.4f}')
 
         # Save best model based on validation accuracy
         if val_acc > best_val_acc:
