@@ -277,14 +277,23 @@ def load_full_dataset():
 
 def split_three_way(dataset, test_pid, val_pid):
     """Split into train / val / test by participant ID."""
-    print(f"    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
+    # PURITY MODE: Train on 10x, but Test/Val ONLY on the 1x Original samples.
     train, val, test = [], [], []
-    for d in dataset:
+    for i, d in enumerate(dataset):
         pid = d.p_y.item()
+        
+        # Robust check for Original sample
+        # We check for the 'is_orig' attribute, fallback to index if using old dataset
+        is_real = False
+        if hasattr(d, 'is_orig'):
+            is_real = d.is_orig.item()
+        else:
+            is_real = (i % 10 == 0) # Fallback for legacy support
+            
         if pid == test_pid:
-            test.append(d)
+            if is_real: test.append(d)
         elif pid == val_pid:
-            val.append(d)
+            if is_real: val.append(d)
         else:
             train.append(d)
     return train, val, test
@@ -465,7 +474,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, Focal:{USE_FOCAL}, SupCon:{USE_SUPCON}, Temp:Attn, Mix:{USE_MIXUP})')
+    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, Focal:{USE_FOCAL}, SupCon:{USE_SUPCON}, Temp:Attn, Mix:{USE_MIXUP}, Eval:PURITY)')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
@@ -478,7 +487,7 @@ def main():
     pids = sorted(set(d.p_y.item() for d in dataset))
     log_print(f'Participants found: {pids}')
     
-    combinations = [(15, 1), (12, 15), (15,10), (13,15), (9,14), (7,8)]
+    combinations = [(15, 1), (12, 15), (15,10), (13,15), (9,14), (7,8), (3,4), (14,15), (8,9), (1,3), (10,13), (11,12), (1,14), (6,7), (10,14), (9,13), (3,15), (6,12), (11,15), (4,15), (12,14), (5,15)]
     
     total_runs = len(combinations)
     log_print(f'Total combinations: {total_runs} (Ultra-Fast Mode)')
@@ -487,6 +496,7 @@ def main():
 
     for run_idx, (test_pid, val_pid) in enumerate(combinations, 1):
         log_print(f"\n    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
+        log_print(f"    [PURITY FILTER] Testing on Original Samples ONLY.")
         train_data, val_data, test_data = split_three_way(
             dataset, test_pid, val_pid
         )
