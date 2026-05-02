@@ -406,7 +406,7 @@ def train_one_combination(train_data, val_data, test_data,
             if model.training:
                 # Reshape to [Nodes, Channels, Time] -> [N, 4, 30]
                 feat_dim = 30
-                x_seq = batch.x.view(-1, 4, feat_dim)
+                x_seq = batch.x.reshape(-1, 4, feat_dim)
                 
                 # 1. Random Shift (-2 to +2 timesteps)
                 shift = np.random.randint(-2, 3)
@@ -430,7 +430,7 @@ def train_one_combination(train_data, val_data, test_data,
                         padding = x_aug[:, :, -1:].repeat(1, 1, pad_len)
                         x_seq = torch.cat([x_aug, padding], dim=2)
                 
-                batch.x = x_seq.view(batch.x.size(0), -1)
+                batch.x = x_seq.reshape(batch.x.size(0), -1)
 
             optimizer.zero_grad()
             
