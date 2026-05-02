@@ -402,11 +402,14 @@ def train_one_combination(train_data, val_data, test_data,
                 keep_mask = node_idx_in_graph != drop_idx[batch.batch]
                 batch.x = batch.x * keep_mask.unsqueeze(-1).float()
 
-            # --- TEMPORAL SHIFTING ---
+            # --- NITRO TEMPORAL AUGMENTATION (Shift + Stretch) ---
             if model.training:
-                feat_dim = batch.x.size(1) // 4 # 30
+                # Reshape to [Nodes, Channels, Time] -> [N, 4, 30]
+                feat_dim = 30
                 x_seq = batch.x.view(-1, 4, feat_dim)
-                shift = np.random.randint(-5, 6)
+                
+                # 1. Random Shift (-2 to +2 timesteps)
+                shift = np.random.randint(-2, 3)
                 if shift > 0:
                     padding = x_seq[:, :, 0:1].repeat(1, 1, shift)
                     x_seq = torch.cat([padding, x_seq[:, :, :-shift]], dim=2)
@@ -414,6 +417,19 @@ def train_one_combination(train_data, val_data, test_data,
                     shift_abs = abs(shift)
                     padding = x_seq[:, :, -1:].repeat(1, 1, shift_abs)
                     x_seq = torch.cat([x_seq[:, :, shift_abs:], padding], dim=2)
+                
+                # 2. Random Temporal Stretching (0.8x to 1.2x)
+                if np.random.rand() < 0.5:
+                    scale = np.random.uniform(0.8, 1.2)
+                    temp_len = int(30 * scale)
+                    x_aug = F.interpolate(x_seq, size=temp_len, mode='linear', align_corners=True)
+                    if temp_len > 30:
+                        x_seq = x_aug[:, :, :30]
+                    else:
+                        pad_len = 30 - temp_len
+                        padding = x_aug[:, :, -1:].repeat(1, 1, pad_len)
+                        x_seq = torch.cat([x_aug, padding], dim=2)
+                
                 batch.x = x_seq.view(batch.x.size(0), -1)
 
             optimizer.zero_grad()
@@ -522,7 +538,7 @@ def main():
         f.write("=== TRAINING SESSION START ===\n")
 
     log_print(f'\n{"="*50}')
-    log_print(f' VERSION: IMPROVED (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, Focal:{USE_FOCAL}, SupCon:{USE_SUPCON}, Temp:Attn, Mix:{USE_MIXUP}, Eval:PURITY)')
+    log_print(f' VERSION: NITRO-AUG (Attn:GAT, SID:{USE_SENSOR_ID}, S-Drop:{USE_SENSOR_DROP}, Jitter:{USE_DYNAMIC_JITTER}, Shift:±2, Stretch:0.8-1.2x, Focal:{USE_FOCAL}, SupCon:{USE_SUPCON}, Mix:{USE_MIXUP})')
     log_print(f' RUNNING ON: {DEVICE}')
     if DEVICE.type == 'cuda':
         log_print(f' GPU NAME:   {torch.cuda.get_device_name(0)}')
