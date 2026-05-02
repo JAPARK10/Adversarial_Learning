@@ -370,7 +370,7 @@ def train_one_combination(train_data, val_data, test_data,
     PATIENCE = 150 # Disable early stopping for thorough Subject 16 learning
 
     # Initialize AMP Scaler
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     for epoch in range(NUM_EPOCHS):
         model.train()
@@ -397,43 +397,34 @@ def train_one_combination(train_data, val_data, test_data,
             # --- DYNAMIC SENSOR DROP ---
             if USE_SENSOR_DROP and torch.rand(1).item() < SENSOR_DROP_RATE:
                 num_graphs = batch.num_graphs
-                # Pick a random sensor index (0-7) to drop for each graph in batch
                 drop_idx = torch.randint(0, 8, (num_graphs,), device=DEVICE)
-                # Create a mask: True if we KEEP the node
                 node_idx_in_graph = torch.arange(batch.x.size(0), device=DEVICE) % 8
                 keep_mask = node_idx_in_graph != drop_idx[batch.batch]
                 batch.x = batch.x * keep_mask.unsqueeze(-1).float()
-            # ---------------------------
 
-            # --- TEMPORAL SHIFTING (Fixes p16 speed/timing issues) ---
+            # --- TEMPORAL SHIFTING ---
             if model.training:
                 feat_dim = batch.x.size(1) // 4 # 30
                 x_seq = batch.x.view(-1, 4, feat_dim)
                 shift = np.random.randint(-5, 6)
-                
                 if shift > 0:
-                    # Shift right: Pad with the first frame [:, :, 0]
                     padding = x_seq[:, :, 0:1].repeat(1, 1, shift)
                     x_seq = torch.cat([padding, x_seq[:, :, :-shift]], dim=2)
                 elif shift < 0:
-                    # Shift left: Pad with the last frame [:, :, -1]
                     shift_abs = abs(shift)
                     padding = x_seq[:, :, -1:].repeat(1, 1, shift_abs)
                     x_seq = torch.cat([x_seq[:, :, shift_abs:], padding], dim=2)
-                
                 batch.x = x_seq.view(batch.x.size(0), -1)
 
             optimizer.zero_grad()
             
             # --- MIXED PRECISION FORWARD ---
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 # --- Mixup Logic (Graph-Level Shuffling) ---
                 if USE_MIXUP and model.training:
                     mix_lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
                     batch_size = batch.num_graphs
                     graph_index = torch.randperm(batch_size).to(DEVICE)
-                    
-                    # Expand graph-level shuffle to node-level
                     node_index = torch.arange(batch.x.size(0)).to(DEVICE)
                     for i in range(batch_size):
                         node_index[i*8:(i+1)*8] = torch.arange(graph_index[i]*8, (graph_index[i]+1)*8).to(DEVICE)
@@ -456,11 +447,11 @@ def train_one_combination(train_data, val_data, test_data,
 
                 loss_adv = loss_adv_per_sample.mean()
 
-                # 5. Dynamic Orthogonality Loss (Simplified & Active)
+                # Orthogonality
                 z_pub_n = torch.nn.functional.normalize(z_pub, p=2, dim=1)
                 z_pri_n = torch.nn.functional.normalize(z_pri, p=2, dim=1)
                 ortho_per_sample = (z_pub_n * z_pri_n).sum(dim=1).pow(2)
-                loss_ortho = ortho_per_sample.mean() # Filter removed
+                loss_ortho = ortho_per_sample.mean()
 
                 loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
             
@@ -469,6 +460,11 @@ def train_one_combination(train_data, val_data, test_data,
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
+
+            # --- Update Counters ---
+            pred_g = out_g.argmax(dim=1)
+            total_train_correct += (pred_g == batch.y.squeeze(-1)).sum().item()
+            total_train_samples += batch.y.size(0)
         
         # --- EVALUATION ---
         train_acc = total_train_correct / total_train_samples
