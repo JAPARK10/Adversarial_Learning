@@ -567,7 +567,7 @@ def main():
             
             acc, f1, class_errors = train_one_combination(
                 train_data, val_data, test_data,
-                test_pid, val_pid, run_idx, total_runs
+                test_pid, val_pid, i + 1, total_runs
             )
             
             if acc > 0.20: # If we passed the "Dead Zone"
