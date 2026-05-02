@@ -363,7 +363,7 @@ def train_one_combination(train_data, val_data, test_data,
     best_errors   = {}
     
     epochs_no_improve = 0
-    PATIENCE = 15
+    PATIENCE = 150 # Disable early stopping for thorough Subject 16 learning
 
     for epoch in range(NUM_EPOCHS):
         model.train()
