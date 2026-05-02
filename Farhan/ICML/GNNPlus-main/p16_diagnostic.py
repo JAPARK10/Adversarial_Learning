@@ -34,19 +34,21 @@ def analyze_subject(dataset_path, pid):
     
     all_features = torch.stack(subject_features) # [N, 8, features]
     
-    mean_val = all_features.mean(dim=(0,1))
-    std_val = all_features.std(dim=(0,1))
-    max_val = all_features.max(dim=(0,1))[0]
-    min_val = all_features.min(dim=(0,1))[0]
+    # Flatten N and 8 to calculate stats over all nodes/samples
+    flat_features = all_features.view(-1, all_features.size(-1))
     
-    print(f"  Feature Mean: {mean_val.numpy()}")
-    print(f"  Feature Std:  {std_val.numpy()}")
-    print(f"  Dynamic Range: {(max_val - min_val).numpy()}")
+    mean_val = flat_features.mean(dim=0)
+    std_val = flat_features.std(dim=0)
+    max_val = flat_features.max(dim=0)[0]
+    min_val = flat_features.min(dim=0)[0]
+    
+    print(f"  Feature Mean (avg): {mean_val.mean().item():.4f}")
+    print(f"  Feature Std (avg):  {std_val.mean().item():.4f}")
+    print(f"  Avg Dynamic Range: {(max_val - min_val).mean().item():.4f}")
     
     # Analyze Temporal Variance (Speed indicator)
-    # Features are flattened [8 sensors * T features] or [8 sensors, T]
-    # In our case, x is [8, T] usually.
-    temporal_variance = all_features.std(dim=2).mean() # Variance across the time/feature dimension
+    # Variance across the time/feature dimension per node/sample
+    temporal_variance = all_features.std(dim=2).mean() 
     print(f"  Avg Temporal Variance: {temporal_variance.item():.4f}")
 
     return {

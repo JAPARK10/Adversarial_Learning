@@ -398,6 +398,16 @@ def train_one_combination(train_data, val_data, test_data,
                 batch.x = batch.x * keep_mask.unsqueeze(-1).float()
             # ---------------------------
 
+            # --- TEMPORAL SHIFTING (Fixes p16 speed/timing issues) ---
+            if model.training:
+                # x is [nodes*batch, 120] -> reshape to [nodes*batch, 4, 30]
+                # 4 features: rssi, phase, rssi_delta, phase_delta
+                feat_dim = batch.x.size(1) // 4 # should be 30
+                x_seq = batch.x.view(-1, 4, feat_dim)
+                shift = np.random.randint(-5, 6) # Shift by up to 5 steps
+                x_seq = torch.roll(x_seq, shifts=shift, dims=2)
+                batch.x = x_seq.view(batch.x.size(0), -1)
+
             optimizer.zero_grad()
             
             # --- Mixup Logic (Graph-Level Shuffling) ---
