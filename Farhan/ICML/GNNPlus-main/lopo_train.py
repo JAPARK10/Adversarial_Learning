@@ -151,8 +151,12 @@ class UserDiscriminator(nn.Module):
 
 
 def get_adversarial_lambda(epoch, max_epochs):
-    """Logistic warmup for the adversarial weight lambda."""
-    p = float(epoch) / max_epochs
+    """Logistic warmup for the adversarial weight lambda with a 20-epoch delay."""
+    if epoch < 20:
+        return 0.0
+    
+    # Adjusted progress after the delay
+    p = float(epoch - 20) / (max_epochs - 20)
     return 2. / (1. + np.exp(-10. * p)) - 1.
 
 
