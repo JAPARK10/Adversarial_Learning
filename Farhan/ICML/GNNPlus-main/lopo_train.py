@@ -358,6 +358,9 @@ def train_one_combination(train_data, val_data, test_data,
     best_test_acc = 0.0
     best_f1       = 0.0
     best_errors   = {}
+    
+    epochs_no_improve = 0
+    PATIENCE = 15
 
     for epoch in range(NUM_EPOCHS):
         model.train()
@@ -366,7 +369,13 @@ def train_one_combination(train_data, val_data, test_data,
         total_train_samples = 0
         
         current_lam = get_adversarial_lambda(epoch, NUM_EPOCHS)
-
+        
+        # --- LR WARMUP (First 5 Epochs) ---
+        if epoch < 5:
+            curr_lr = 0.001 * (epoch + 1) / 5
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = curr_lr
+        
         for batch in train_loader:
             batch = batch.to(DEVICE)
 
@@ -444,20 +453,35 @@ def train_one_combination(train_data, val_data, test_data,
             loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # GRADIENT CLIPPING
             optimizer.step()
         
-        if scheduler:
-            scheduler.step()
-
-        # Check accuracies
+        # --- EVALUATION ---
         train_acc = total_train_correct / total_train_samples
         val_acc, _, _ = evaluate(model, val_loader)
-        
-        # Log progress
-        if (epoch + 1) % 10 == 0:
-            log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | L: {loss.item():.4f} (G:{loss_gesture.item():.2f} Adv:{loss_adv.item():.2f} Ort:{loss_ortho.item():.2f}) | Ent: {entropy.item():.2f} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+        test_acc, f1, class_errors = evaluate(model, test_loader)
+
+        if scheduler:
+            scheduler.step(val_acc)
+
+        # --- EARLY STOPPING CHECK ---
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_test_acc = test_acc
+            best_f1 = f1
+            best_errors = class_errors
+            epochs_no_improve = 0
         else:
-            log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f}')
+            epochs_no_improve += 1
+            
+        # --- LOGGING ---
+        unique_preds = torch.unique(pred_g).size(0)
+        if (epoch + 1) % 1 == 0: # Print every epoch for diagnostics
+            log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f} | Div: {unique_preds}/21 | G:{loss_gesture.item():.3f} Adv:{loss_adv.item():.3f} Ort:{loss_ortho.item():.3f}')
+
+        if epochs_no_improve >= PATIENCE:
+            log_print(f"    [EARLY STOP] No improvement for {PATIENCE} epochs. Best Val: {best_val_acc:.4f}")
+            break
 
         # Save best model based on validation accuracy
         if val_acc > best_val_acc:
