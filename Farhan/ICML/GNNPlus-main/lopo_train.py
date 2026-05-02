@@ -15,6 +15,9 @@ HOW TO RUN:
     python lopo_train.py
 """
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.optim.lr_scheduler")
+
 import os
 import torch
 import torch.nn as nn
