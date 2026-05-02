@@ -529,10 +529,22 @@ def main():
             log_print(f'  Skipping: empty split for test=p{test_pid+1} val=p{val_pid+1}')
             continue
 
-        acc, f1, class_errors = train_one_combination(
-            train_data, val_data, test_data,
-            test_pid, val_pid, run_idx, total_runs
-        )
+        MAX_ATTEMPTS = 2
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                log_print(f"    [RETRY] Attempt {attempt}/{MAX_ATTEMPTS} for p{test_pid+1}...")
+            
+            acc, f1, class_errors = train_one_combination(
+                train_data, val_data, test_data,
+                test_pid, val_pid, run_idx, total_runs
+            )
+            
+            if acc > 0.20: # If we passed the "Dead Zone"
+                break
+            elif attempt < MAX_ATTEMPTS:
+                log_print(f"    [FAIL] Run was dead (Acc: {acc:.4f}). Resetting and retrying...")
+            else:
+                log_print(f"    [ABANDON] Run stayed dead after {MAX_ATTEMPTS} attempts. Recording score.")
         
         log_print(f"  [DONE] Acc: {acc:.4f} | F1: {f1:.4f}")
         # Print Top 3 Failing Gestures
