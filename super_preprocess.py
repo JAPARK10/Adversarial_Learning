@@ -39,21 +39,15 @@ class SuperGeometricDataset(InMemoryDataset):
                 def create_x(r, p): return torch.cat([r, p], dim=1)
                 def add_obj(r, p, is_o=False): data_list.append(self.create_data_object(create_x(r, p), fc_edge_index, g_id, p_id, is_orig=is_o))
 
-                # 10x CHAOS AUGMENTATION (Proven Strategy)
+                # 3x ULTRA-FAST AUGMENTATION (Original + Mirror + 0.02 Jitter)
                 add_obj(rssi, phase, is_o=True) # Original
                 
                 # Mirroring
                 m = [4, 5, 6, 7, 0, 1, 2, 3]
                 add_obj(rssi[m], phase[m])
                 
-                # Jitter (0.01, 0.02, 0.03)
-                for sigma in [0.01, 0.02, 0.03]:
-                    add_obj(rssi + torch.randn_like(rssi)*sigma, phase)
-                    add_obj(rssi[m] + torch.randn_like(rssi)*sigma, phase[m])
-                
-                # Scaling (1.05, 0.95)
-                add_obj(rssi * 1.05, phase * 1.05)
-                add_obj(rssi * 0.95, phase * 0.95)
+                # Jitter (0.02 only)
+                add_obj(rssi + torch.randn_like(rssi)*0.02, phase)
 
             except Exception: pass
 

@@ -32,7 +32,7 @@ from itertools import permutations
 
 # ── HYPERPARAMETERS (Tuning Area) ──────────────────────────────────────────
 NUM_EPOCHS       = 150
-BATCH_SIZE       = 128     # Doubled for speed on A5000
+BATCH_SIZE       = 256     # Maximum throughput for 3x data
 LR               = 0.001   
 DIM_IN           = 120     
 DIM_HIDDEN       = 256     
@@ -369,6 +369,9 @@ def train_one_combination(train_data, val_data, test_data,
     epochs_no_improve = 0
     PATIENCE = 150 # Disable early stopping for thorough Subject 16 learning
 
+    # Initialize AMP Scaler
+    scaler = torch.cuda.amp.GradScaler()
+
     for epoch in range(NUM_EPOCHS):
         model.train()
         
@@ -422,64 +425,50 @@ def train_one_combination(train_data, val_data, test_data,
 
             optimizer.zero_grad()
             
-            # --- Mixup Logic (Graph-Level Shuffling) ---
-            if USE_MIXUP and model.training:
-                mix_lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
-                batch_size = batch.num_graphs
-                graph_index = torch.randperm(batch_size).to(DEVICE)
-                
-                # Expand graph-level shuffle to node-level
-                # Since each graph has exactly 8 nodes
-                node_index = torch.arange(batch.x.size(0)).to(DEVICE)
-                for i in range(batch_size):
-                    node_index[i*8:(i+1)*8] = torch.arange(graph_index[i]*8, (graph_index[i]+1)*8).to(DEVICE)
-                
-                mixed_x = mix_lam * batch.x + (1 - mix_lam) * batch.x[node_index]
-                
-                out_g, out_p, z_pub, z_pri = model(mixed_x, batch.edge_index, batch.batch, current_lam)
-                
-                # Mixed Gesture Loss (labels are graph-level)
-                loss_gesture = mix_lam * criterion_gesture(out_g, batch.y.squeeze(-1)) + \
-                               (1 - mix_lam) * criterion_gesture(out_g, batch.y[graph_index].squeeze(-1))
-                
-                # Mixed Identity Loss
-                loss_adv_per_sample = mix_lam * torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none') + \
-                                      (1 - mix_lam) * torch.nn.functional.cross_entropy(out_p, batch.p_y[graph_index].squeeze(-1), reduction='none')
-            else:
-                graph_index = torch.arange(batch.num_graphs).to(DEVICE) # Default for non-mixup
-                out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
-                loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
-                loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
+            # --- MIXED PRECISION FORWARD ---
+            with torch.cuda.amp.autocast():
+                # --- Mixup Logic (Graph-Level Shuffling) ---
+                if USE_MIXUP and model.training:
+                    mix_lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
+                    batch_size = batch.num_graphs
+                    graph_index = torch.randperm(batch_size).to(DEVICE)
+                    
+                    # Expand graph-level shuffle to node-level
+                    node_index = torch.arange(batch.x.size(0)).to(DEVICE)
+                    for i in range(batch_size):
+                        node_index[i*8:(i+1)*8] = torch.arange(graph_index[i]*8, (graph_index[i]+1)*8).to(DEVICE)
+                    
+                    mixed_x = mix_lam * batch.x + (1 - mix_lam) * batch.x[node_index]
+                    out_g, out_p, z_pub, z_pri = model(mixed_x, batch.edge_index, batch.batch, current_lam)
+                    
+                    loss_gesture = mix_lam * criterion_gesture(out_g, batch.y.squeeze(-1)) + \
+                                   (1 - mix_lam) * criterion_gesture(out_g, batch.y[graph_index].squeeze(-1))
+                    loss_adv_per_sample = mix_lam * torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none') + \
+                                          (1 - mix_lam) * torch.nn.functional.cross_entropy(out_p, batch.p_y[graph_index].squeeze(-1), reduction='none')
+                else:
+                    out_g, out_p, z_pub, z_pri = model(batch.x, batch.edge_index, batch.batch, current_lam)
+                    loss_gesture = criterion_gesture(out_g, batch.y.squeeze(-1))
+                    loss_adv_per_sample = torch.nn.functional.cross_entropy(out_p, batch.p_y.squeeze(-1), reduction='none')
+
+                if USE_SUPCON:
+                    loss_supcon = supcon_criterion(z_pub, batch.y.squeeze(-1))
+                    loss_gesture = 0.5 * loss_gesture + 0.5 * loss_supcon
+
+                loss_adv = loss_adv_per_sample.mean()
+
+                # 5. Dynamic Orthogonality Loss (Simplified & Active)
+                z_pub_n = torch.nn.functional.normalize(z_pub, p=2, dim=1)
+                z_pri_n = torch.nn.functional.normalize(z_pri, p=2, dim=1)
+                ortho_per_sample = (z_pub_n * z_pri_n).sum(dim=1).pow(2)
+                loss_ortho = ortho_per_sample.mean() # Filter removed
+
+                loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
             
-            # Monitoring Training Accuracy (on dominant label)
-            pred_g = out_g.argmax(dim=1)
-            total_train_correct += (pred_g == batch.y.squeeze(-1)).sum().item()
-            total_train_samples += batch.y.size(0)
-            
-            # 2. SupCon Loss (Optional Improvement)
-            if USE_SUPCON:
-                loss_supcon = supcon_criterion(z_pub, batch.y.squeeze(-1))
-                loss_gesture = 0.5 * loss_gesture + 0.5 * loss_supcon
-
-            # 3. Adversarial Loss (DANN)
-            loss_adv = loss_adv_per_sample.mean()
-
-            # 4. Discriminator Entropy (Monitoring "Confusion")
-            probs_p = torch.softmax(out_p, dim=1)
-            entropy = -torch.sum(probs_p * torch.log(probs_p + 1e-6), dim=1).mean()
-
-            # 5. Dynamic Orthogonality Loss (Per-Sample)
-            z_pub_n = torch.nn.functional.normalize(z_pub, p=2, dim=1)
-            z_pri_n = torch.nn.functional.normalize(z_pri, p=2, dim=1)
-            ortho_per_sample = (z_pub_n * z_pri_n).sum(dim=1).pow(2)
-            certainty_weight = torch.exp(-loss_adv_per_sample)
-            loss_ortho = (certainty_weight * ortho_per_sample).mean()
-
-            loss = loss_gesture + (current_lam * loss_adv) + (ORTHO_WEIGHT * loss_ortho)
-            
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # GRADIENT CLIPPING
-            optimizer.step()
+            # --- MIXED PRECISION BACKWARD ---
+            scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
         
         # --- EVALUATION ---
         train_acc = total_train_correct / total_train_samples
@@ -557,8 +546,11 @@ def main():
 
     all_acc, all_f1 = [], []
 
-    for run_idx, (test_pid, val_pid) in enumerate(combinations, 1):
-        log_print(f"\n    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
+    for i, (test_pid, val_pid) in enumerate(combinations):
+        from datetime import datetime
+        start_time = datetime.now().strftime("%H:%M:%S")
+        log_print(f"\n    [{start_time}] Initializing model and loaders for run {i+1}/{len(combinations)}...")
+        log_print(f"    Splitting data (Test: p{test_pid+1}, Val: p{val_pid+1})...")
         log_print(f"    [PURITY FILTER] Testing on Original Samples ONLY.")
         train_data, val_data, test_data = split_three_way(
             dataset, test_pid, val_pid
