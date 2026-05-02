@@ -404,12 +404,20 @@ def train_one_combination(train_data, val_data, test_data,
 
             # --- TEMPORAL SHIFTING (Fixes p16 speed/timing issues) ---
             if model.training:
-                # x is [nodes*batch, 120] -> reshape to [nodes*batch, 4, 30]
-                # 4 features: rssi, phase, rssi_delta, phase_delta
-                feat_dim = batch.x.size(1) // 4 # should be 30
+                feat_dim = batch.x.size(1) // 4 # 30
                 x_seq = batch.x.view(-1, 4, feat_dim)
-                shift = np.random.randint(-5, 6) # Shift by up to 5 steps
-                x_seq = torch.roll(x_seq, shifts=shift, dims=2)
+                shift = np.random.randint(-5, 6)
+                
+                if shift > 0:
+                    # Shift right: Pad with the first frame [:, :, 0]
+                    padding = x_seq[:, :, 0:1].repeat(1, 1, shift)
+                    x_seq = torch.cat([padding, x_seq[:, :, :-shift]], dim=2)
+                elif shift < 0:
+                    # Shift left: Pad with the last frame [:, :, -1]
+                    shift_abs = abs(shift)
+                    padding = x_seq[:, :, -1:].repeat(1, 1, shift_abs)
+                    x_seq = torch.cat([x_seq[:, :, shift_abs:], padding], dim=2)
+                
                 batch.x = x_seq.view(batch.x.size(0), -1)
 
             optimizer.zero_grad()
