@@ -489,28 +489,6 @@ def train_one_combination(train_data, val_data, test_data,
         if (epoch + 1) % 1 == 0: # Print every epoch for diagnostics
             log_print(f'    Epoch {epoch+1:03d}/{NUM_EPOCHS} | Train: {train_acc:.4f} | Val: {val_acc:.4f} | Div: {unique_preds}/21 | G:{loss_gesture.item():.4f} Adv:{loss_adv.item():.4f} Ort:{loss_ortho.item():.5f}')
 
-        # --- SUBJECT-AWARE EARLY STOPPING ---
-        # If the subject is already doing great (>85%), we can stop early to save time.
-        # If the subject is struggling (<75%), we NEVER stop early.
-        if val_acc > 0.85:
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-            
-            if epochs_no_improve >= 30: # Patience of 30 for converged subjects
-                log_print(f"    [EARLY STOP] Subject converged at {val_acc:.4f}. Skipping remaining epochs.")
-                break
-        else:
-            # For struggling subjects, just track best but don't increment patience
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-
-        # Save best model based on validation accuracy
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_test_acc, best_f1, best_errors = evaluate(model, test_loader)
 
     return best_test_acc, best_f1, best_errors
 
