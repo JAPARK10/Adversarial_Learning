@@ -39,15 +39,23 @@ class SuperGeometricDataset(InMemoryDataset):
                 def create_x(r, p): return torch.cat([r, p], dim=1)
                 def add_obj(r, p, is_o=False): data_list.append(self.create_data_object(create_x(r, p), fc_edge_index, g_id, p_id, is_orig=is_o))
 
-                # 3x ULTRA-FAST AUGMENTATION (Original + Mirror + 0.02 Jitter)
-                add_obj(rssi, phase, is_o=True) # Original
+                # 4x ROBUST AUGMENTATION (Original + Mirror + Strong Jitter + Spatial Shift)
+                add_obj(rssi, phase, is_o=True) # 1. Original
                 
-                # Mirroring
+                # 2. Mirroring (Left/Right Swap)
                 m = [4, 5, 6, 7, 0, 1, 2, 3]
                 add_obj(rssi[m], phase[m])
                 
-                # Jitter (0.02 only)
-                add_obj(rssi + torch.randn_like(rssi)*0.02, phase)
+                # 3. Stronger Jitter (Improved Noise Robustness)
+                add_obj(rssi + torch.randn_like(rssi)*0.05, phase)
+
+                # 4. Spatial Bias Shift (Simulating Off-center participants)
+                # Apply a gain gradient: scale sensors 0-3 by 'g' and 4-7 by '1/g'
+                gain = 0.8 + (torch.rand(1).item() * 0.4) # Random gain between 0.8 and 1.2
+                spatial_rssi = rssi.clone()
+                spatial_rssi[:4] *= gain
+                spatial_rssi[4:] *= (1.0 / gain)
+                add_obj(spatial_rssi, phase)
 
             except Exception: pass
 
@@ -67,7 +75,16 @@ class SuperGeometricDataset(InMemoryDataset):
 
 def main():
     root_dir = r"c:\Users\jerem\Desktop\Workspace_VSCode\CoDaS\Adversarial_Learning\Farhan\ICML\GNNPlus-main\RFIDDataSet"
-    if not os.path.exists(root_dir): return
+    if not os.path.exists(root_dir):
+        print(f"Error: root_dir {root_dir} does not exist.")
+        return
+        
+    # FORCE REPROCESS: Delete the old file so torch_geometric runs process() again
+    pt_file = os.path.join(root_dir, 'processed', 'super_geometric_data.pt')
+    if os.path.exists(pt_file):
+        print(f"Removing old dataset file: {pt_file}")
+        os.remove(pt_file)
+        
     dataset = SuperGeometricDataset(root=root_dir)
     print(f"\nDONE! Total samples: {len(dataset)}")
 
