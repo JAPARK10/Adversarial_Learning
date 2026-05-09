@@ -1,10 +1,17 @@
-# Ignore massive datasets
+# Ignore massive datasets and tensors
 RFIDDataSet/
 datasets/
+DataSet3m/
+SaveAsTensors/
 
-# Ignore outputs and results logs to prevent huge uploads
-results/
-results_lopo/
+# Large data and model files
+*.pt
+*.npy
+*.pth
+*.pdf
+
+# Ignore outputs and results logs
+results*/
 *.txt
 !requirements.txt
 training_output.txt
